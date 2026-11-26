@@ -17,6 +17,7 @@ const PRODUCTS: Product[] = ['search', 'listings', 'calendars', 'priceQuotes', '
 const root = new URL('..', import.meta.url);
 const areas = JSON.parse(readFileSync(new URL('contract/reference-areas.json', root), 'utf8')).areas as {
   id: string;
+  kind: string;
   bbox: { south: number; west: number; north: number; east: number };
 }[];
 const idsPath = new URL('fixtures/listing-ids.json', root);
@@ -33,8 +34,13 @@ function save(fixture: Fixture): void {
   console.log(`wrote ${file.pathname} (${fixture.recordings.length} exchanges)`);
 }
 
-/** A small box at the area's centre and one price band, so a search fixture takes few requests. */
-function smallQuery(bbox: { south: number; west: number; north: number; east: number }): SearchQuery {
+/**
+ * A query that takes few requests: a small box at a dense area's centre, or a
+ * whole rural area, with a narrow price range.
+ */
+function smallQuery(area: (typeof areas)[number]): SearchQuery {
+  const { bbox } = area;
+  if (area.kind === 'rural') return { area: { bbox }, nightlyPrice: { min: 100, max: 150 } };
   const lat = (bbox.south + bbox.north) / 2;
   const lng = (bbox.west + bbox.east) / 2;
   return {
@@ -47,15 +53,17 @@ const calendars = new Map<string, Calendar[]>();
 
 for (const product of wanted) {
   for (const area of [...areas.map((a) => a.id), 'missing']) {
-    if (area === 'missing' && product === 'search') continue;
+    // Reviews of a missing listing fail with a generic error, so there is no missing-listing fixture for them.
+    if (area === 'missing' && (product === 'search' || product === 'reviews')) continue;
     const transport = recordingTransport(impitTransport());
     const client = createClient({ transport, limits: { requestsPerSecond: 1 } });
     const areaIds = ids[area] ?? [];
     let inputs: unknown[];
     let outcome;
     if (product === 'search') {
-      const bbox = areas.find((a) => a.id === area)!.bbox;
-      inputs = [smallQuery(bbox)];
+      inputs = [smallQuery(areas.find((a) => a.id === area)!)];
+      // One place query, so the fixtures cover resolving a place to its map area.
+      if (area === 'hilo-hi') inputs.push({ area: { place: 'Hilo, HI' }, nightlyPrice: { min: 100, max: 110 } });
       const { items, outcome: o } = await client.search(inputs as SearchQuery[]).all();
       outcome = o;
       ids[area] = [...new Set(items.map((h) => h.listing.id))].slice(0, 2).concat(ids[area] ?? []).slice(0, 2);

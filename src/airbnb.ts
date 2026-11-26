@@ -120,7 +120,9 @@ export async function graphql(
   const errors = (json as { errors?: unknown }).errors;
   if (Array.isArray(errors) && errors.length > 0) {
     const messages = errors.map((e) => String((e as { message?: unknown })?.message ?? '?')).join('; ');
-    throw new AirbnbError('RequestRejected', `${operation} returned errors: ${messages}`, {
+    // A removed or hidden listing is refused at the node lookup.
+    const category = /permission denied for id .* path: \/node\b/i.test(messages) ? 'NotFound' : 'RequestRejected';
+    throw new AirbnbError(category, `${operation} returned errors: ${messages}`, {
       exchange: result.exchange,
     });
   }

@@ -23,6 +23,8 @@ describe('geometry', () => {
   });
   it('splits price bands into halves sharing a boundary, down to one unit', () => {
     expect(splitBand(100, 200)).toEqual([[100, 150], [150, 200]]);
+    expect(splitBand(100, 200, 120)).toEqual([[100, 125], [125, 150], [150, 175], [175, 200]]);
+    expect(splitBand(100, 103, 500)).toEqual([[100, 101], [101, 102], [102, 103]]);
     expect(splitBand(1000, null)).toEqual([[1000, 2000], [2000, null]]);
     expect(splitBand(100, 101)).toBeNull();
   });

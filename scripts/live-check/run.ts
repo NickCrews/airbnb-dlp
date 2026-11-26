@@ -31,7 +31,8 @@ const small = args.includes('--small');
 const outDir = flag('--out') ?? '.live-check';
 const history = loadHistory(flag('--history'));
 const { areas: allAreas, thresholds } = loadContract();
-const areas = small ? allAreas.slice(0, 1) : allAreas;
+// The pull-request set searches only the rural area, which one small budget covers completely.
+const areas = small ? allAreas.filter((a) => a.kind === 'rural').slice(0, 1) : allAreas;
 const perArea = small ? 4 : thresholds.sampleListingsPerArea;
 
 const transport = recordingTransport(impitTransport());
@@ -53,11 +54,28 @@ function fail(category: ErrorCategory, check: string, message: string, detail?: 
   failures.push(detail === undefined ? { category, check, message } : { category, check, message, detail });
 }
 
-/** Runs one call within the run's budget; a block stops the whole run. */
-async function run<I, T>(name: string, start: (maxRequests: number) => { all(): Promise<{ items: T[]; outcome: Outcome<I> }> }, share: number): Promise<{ items: T[]; outcome: Outcome<I> } | null> {
+/**
+ * Requests each stage may make. Together they stay within the run budget of
+ * 150, with the fully searched area taking the largest share. The API key
+ * request is counted in the first stage.
+ */
+const ALLOWANCE = {
+  fullSearch: 43,
+  areaSearch: 9,
+  coverage: 1,
+  filterSearch: 3,
+  filterPages: 2,
+  listings: 8,
+  calendars: 8,
+  priceQuotes: 8,
+  reviews: 8,
+};
+
+/** Runs one call within its allowance and the run's remaining budget; a block stops the whole run. */
+async function run<I, T>(name: string, allowance: number, start: (maxRequests: number) => { all(): Promise<{ items: T[]; outcome: Outcome<I> }> }): Promise<{ items: T[]; outcome: Outcome<I> } | null> {
   if (blocked) return null;
-  const budget = Math.max(0, Math.floor(remaining() * share));
-  if (budget === 0) {
+  const budget = Math.min(allowance, remaining());
+  if (budget <= 0) {
     fail('Unknown', name, 'the run budget is spent; the live check needs fewer requests');
     return null;
   }
@@ -94,10 +112,12 @@ const pad = (box: BBox, deg: number): BBox => ({ south: box.south - deg, north: 
 
 const hitsByArea = new Map<string, SearchHit[]>();
 const fullArea = areas.find((a) => a.kind === 'rural') ?? areas[0]!;
-for (const area of areas) {
-  const query: SearchQuery = { area: { bbox: area.bbox } };
-  const share = area === fullArea ? 0.25 : 0.12;
-  const result = await run(`search.${area.id}`, (maxRequests) => client.search([query], { maxRequests }), share);
+// The fully searched area goes first, so the coverage audit has a complete set to check against.
+for (const area of [fullArea, ...areas.filter((a) => a !== fullArea)]) {
+  // Other areas search one price band, enough to reach their minimum count on a small allowance.
+  const query: SearchQuery = area === fullArea ? { area: { bbox: area.bbox } } : { area: { bbox: area.bbox }, nightlyPrice: { min: 100, max: 200 } };
+  const allowance = area === fullArea ? ALLOWANCE.fullSearch : ALLOWANCE.areaSearch;
+  const result = await run(`search.${area.id}`, allowance, (maxRequests) => client.search([query], { maxRequests }));
   if (!result) continue;
   const hits = result.items;
   hitsByArea.set(area.id, hits);
@@ -130,7 +150,7 @@ for (const area of areas) {
   for (const centre of centres) {
     const { lat, lng } = centre.listing.location!;
     const box = { south: lat - 0.005, north: lat + 0.005, west: lng - 0.01, east: lng + 0.01 };
-    const result = await run('coverage', (maxRequests) => client.search([{ area: { bbox: box } }], { maxRequests: Math.min(maxRequests, 1) }), 0.05);
+    const result = await run('coverage', ALLOWANCE.coverage, (maxRequests) => client.search([{ area: { bbox: box } }], { maxRequests }));
     if (!result || result.outcome.incomplete.length > 0) continue;
     for (const hit of result.items) {
       if (!hit.listing.location || !inBox(fullArea.bbox, hit.listing.location.lat, hit.listing.location.lng)) continue;
@@ -146,23 +166,25 @@ for (const area of areas) {
 // ---------------------------------------------------------------- filters
 
 /** Each filter whose effect the library can read back from search cards or listing pages. */
-const filterArea = areas[0]!;
-const centre = { lat: (filterArea.bbox.south + filterArea.bbox.north) / 2, lng: (filterArea.bbox.west + filterArea.bbox.east) / 2 };
-const filterBox = { south: centre.lat - 0.02, north: centre.lat + 0.02, west: centre.lng - 0.03, east: centre.lng + 0.03 };
+// The whole dense area in a narrow price band: enough listings for every filter, few enough to fit on a page or two.
+const filterArea = allAreas.find((a) => a.kind === 'dense') ?? allAreas[0]!;
+const filterBox = filterArea.bbox;
+const FILTER_BAND = { min: 100, max: 105 };
 const FILTERS: { name: string; query: Partial<SearchQuery>; card?: (h: SearchHit) => boolean; page?: (l: Listing) => boolean }[] = [
   {
     name: 'nightlyPrice',
-    query: { nightlyPrice: { min: 100, max: 150 } },
+    query: { nightlyPrice: { min: 100, max: 110 } },
     // Card prices include fees; the filter applies before them.
     card: (h) => !h.listing.price?.nightly || (h.listing.price.nightly.amount >= 80 && h.listing.price.nightly.amount <= 200),
   },
   { name: 'roomTypes', query: { roomTypes: ['private_room'] }, page: (l) => l.roomType === 'private_room' },
-  { name: 'minBedrooms', query: { minBedrooms: 3 }, page: (l) => l.bedrooms?.count == null || l.bedrooms.count >= 3 },
+  // Three-bedroom homes are rare in the cheap band, so this filter uses a higher one.
+  { name: 'minBedrooms', query: { minBedrooms: 3, nightlyPrice: { min: 250, max: 260 } }, page: (l) => l.bedrooms?.count == null || l.bedrooms.count >= 3 },
   { name: 'propertyGroups', query: { propertyGroups: ['apartment'] }, page: (l) => l.propertyType === null || ['APARTMENT', 'CONDOMINIUM', 'SERVICED_APARTMENT', 'LOFT'].includes(l.propertyType) },
 ];
 for (const filter of small ? FILTERS.slice(0, 2) : FILTERS) {
-  const query: SearchQuery = { area: { bbox: filterBox }, ...filter.query };
-  const result = await run(`filter.${filter.name}`, (maxRequests) => client.search([query], { maxRequests: Math.min(maxRequests, 3) }), 0.05);
+  const query: SearchQuery = { area: { bbox: filterBox }, nightlyPrice: FILTER_BAND, ...filter.query };
+  const result = await run(`filter.${filter.name}`, ALLOWANCE.filterSearch, (maxRequests) => client.search([query], { maxRequests }));
   if (!result) continue;
   if (result.items.length === 0) {
     fail('ResponseChanged', `filter.${filter.name}`, 'the filtered search returned no listings');
@@ -174,7 +196,7 @@ for (const filter of small ? FILTERS.slice(0, 2) : FILTERS) {
   }
   if (filter.page) {
     const ids = sampleEvenly(result.items, 2).map((h) => h.listing.id);
-    const pages = await run(`filter.${filter.name}.pages`, (maxRequests) => client.listings(ids, { maxRequests }), 0.05);
+    const pages = await run(`filter.${filter.name}.pages`, ALLOWANCE.filterPages, (maxRequests) => client.listings(ids, { maxRequests }));
     const bad = (pages?.items ?? []).flatMap((r) => (r.ok && !filter.page!(r.value) ? [r.value.id] : []));
     if (bad.length > 0) fail('ResponseChanged', `filter.${filter.name}`, `listings ${bad.join(', ')} do not satisfy the filter`);
   }
@@ -187,13 +209,13 @@ const sampled = new Map<Area, string[]>();
 for (const area of areas) {
   const ids = sampleEvenly(hitsByArea.get(area.id) ?? [], perArea).map((h) => h.listing.id);
   sampled.set(area, ids);
-  const result = await run(`listings.${area.id}`, (maxRequests) => client.listings(ids, { maxRequests }), 0.3);
+  const result = await run(`listings.${area.id}`, ALLOWANCE.listings, (maxRequests) => client.listings(ids, { maxRequests }));
   if (result) listingResults.push(...result.items);
 }
 successShare('listings', listingResults, thresholds.fetchSuccessShare.listings);
 
 const twoPerArea = [...sampled.values()].flatMap((ids) => ids.slice(0, small ? 1 : 2));
-const calendars = await run('calendars', (maxRequests) => client.calendars(twoPerArea, { maxRequests }), 0.3);
+const calendars = await run('calendars', ALLOWANCE.calendars, (maxRequests) => client.calendars(twoPerArea, { maxRequests }));
 if (calendars) {
   successShare('calendars', calendars.items, thresholds.fetchSuccessShare.calendars);
   const last = addDays(today, thresholds.ranges.calendarMonths * 31 + 2);
@@ -211,7 +233,7 @@ for (const r of calendars?.items ?? []) {
   const first = bookableStays(r.value, addDays(today, 2))[Symbol.iterator]().next();
   if (!first.done) stays.push(first.value);
 }
-const quotes = await run('priceQuotes', (maxRequests) => client.priceQuotes(stays, { maxRequests }), 0.4);
+const quotes = await run('priceQuotes', ALLOWANCE.priceQuotes, (maxRequests) => client.priceQuotes(stays, { maxRequests }));
 if (quotes) {
   successShare('priceQuotes', quotes.items, thresholds.fetchSuccessShare.priceQuotes);
   const { min, max } = thresholds.ranges.nightlyPriceUsd;
@@ -223,7 +245,7 @@ if (quotes) {
   }
 }
 
-const reviews = await run('reviews', (maxRequests) => client.reviews(twoPerArea, { limit: 24, maxRequests }), 0.9);
+const reviews = await run('reviews', ALLOWANCE.reviews, (maxRequests) => client.reviews(twoPerArea, { limit: 24, maxRequests }));
 if (reviews) {
   successShare('reviews', reviews.items, thresholds.fetchSuccessShare.reviews);
   const now = Date.now();

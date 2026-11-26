@@ -33,7 +33,9 @@ const { error, incomplete } = await search.outcome();
 | `priceQuotes` | stays | the total and its breakdown |
 | `reviews` | listing ids | review dates, newest first, and Airbnb's total |
 
-Search is complete: each query splits itself by price and by area until no piece hits Airbnb's result cap.
+Search is complete: each query splits itself by price and by area until no piece hits Airbnb's result cap. Without stay dates, Airbnb prices each listing for a one-week trip, and price filters apply to that price.
+
+Known limitation: Airbnb ignores the `shared_room` room-type filter and returns other room types. Search cards do not carry a room type, so the library cannot filter them itself; check `Listing.roomType` from `listings()`.
 
 Every method is bulk and returns a `Batch`, modelled on fetch's `Response`. `items()` streams results as they finish, and `outcome()` resolves with what ended the call early, which inputs are incomplete, and how many requests were made. It never rejects. One listing failing yields a typed error for that item and the rest continue. A `Blocked` failure ends the call.
 

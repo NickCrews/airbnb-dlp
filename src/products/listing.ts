@@ -1,25 +1,20 @@
 /**
- * Listing attributes, from the listing page's embedded GraphQL state
- * (`<script id="data-deferred-state-0">`). Fields are found by key name and
- * shape anywhere in the tree, since Airbnb moves objects between sections.
+ * Listing attributes, from the listing page. The page is not a documented API,
+ * so each field is read in up to three independent ways, and a change to one
+ * leaves the others working:
+ *
+ * 1. the embedded GraphQL state, in every JSON script on the page. Fields are
+ *    found by key name and shape anywhere in the tree, not by path, so renamed
+ *    wrappers and moved sections do not break them;
+ * 2. the schema.org JSON-LD block, for the coordinate;
+ * 3. patterns over the raw HTML, for when the JSON does not parse. A pattern
+ *    yields nothing when it matches more than one distinct value.
  */
 import { ORIGIN, decodeNodeId, htmlRequest } from '../airbnb.ts';
 import type { Call } from '../call.ts';
 import { AirbnbError } from '../errors.ts';
 import { MarkerMissingError, ShapeError } from '../parse-errors.ts';
-import {
-  asArray,
-  asBoolean,
-  asNumber,
-  asRecord,
-  asString,
-  distinct,
-  isNumber,
-  isRecord,
-  isString,
-  objects,
-  only,
-} from '../json.ts';
+import { asArray, asNumber, asRecord, asString, distinct, isNumber, isRecord, isString, objects, only } from '../json.ts';
 import type { Host, Listing, ListingId, RoomType } from '../types.ts';
 
 export const ROOM_TYPES: Record<string, RoomType> = {
@@ -36,32 +31,49 @@ export function listingPageUrl(id: ListingId, query: Record<string, string> = {}
 
 const SCRIPT_RE = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
 
-/**
- * The page's embedded data: the GraphQL state in `data-deferred-state-0`, plus
- * the other JSON scripts, which carry fields such as bedCount. Throws
- * MarkerMissingError when the page has no GraphQL state.
- */
-export function pageState(html: string): unknown[] {
-  let state: unknown[] | null = null;
-  const extra: unknown[] = [];
+export interface PageDocs {
+  /** Every JSON script that parses, largest first: the GraphQL state is the largest. */
+  json: unknown[];
+  /** schema.org JSON-LD blocks. */
+  jsonLd: unknown[];
+}
+
+export function pageDocs(html: string): PageDocs {
+  const json: { size: number; doc: unknown }[] = [];
+  const jsonLd: unknown[] = [];
   for (const match of html.matchAll(SCRIPT_RE)) {
     const attrs = match[1]!;
     const text = match[2]!;
-    if (/\bid="data-deferred-state-0"/.test(attrs)) {
-      const client = asArray(asRecord(JSON.parse(text))['niobeClientData']);
-      if (client.length === 0) throw new ShapeError('page state has no niobeClientData');
-      state = client;
-    } else if (/type="application\/json"/.test(attrs) && text.trimStart().startsWith('{')) {
-      try {
-        extra.push(JSON.parse(text));
-      } catch {
-        // A script that is not JSON carries nothing the parser reads.
-      }
+    const isLd = /type="application\/ld\+json"/i.test(attrs);
+    if (!isLd && !/type="[^"]*json[^"]*"/i.test(attrs) && !text.trimStart().startsWith('{')) continue;
+    let doc: unknown;
+    try {
+      doc = JSON.parse(text);
+    } catch {
+      continue;
     }
+    if (isLd) jsonLd.push(doc);
+    else json.push({ size: text.length, doc });
   }
-  if (!state) throw new MarkerMissingError('page has no data-deferred-state-0 script');
-  return [state, ...extra];
+  json.sort((x, y) => y.size - x.size);
+  return { json: json.map((j) => j.doc), jsonLd };
 }
+
+/** The one distinct capture of a global pattern in the raw document, or null. */
+function soleMatch(html: string, pattern: RegExp): string | null {
+  const values = new Set<string>();
+  for (const m of html.matchAll(pattern)) values.add(m[1]!);
+  return values.size === 1 ? [...values][0]! : null;
+}
+
+const RAW = {
+  exactLocation: /"\w*[eE]xact[lL]ocation\w*"\s*:\s*(true|false)/g,
+  roomType: /"roomType"\s*:\s*"([^"]+)"/g,
+  personCapacity: /"personCapacity"\s*:\s*(\d+)/g,
+  bedCount: /"bedCount"\s*:\s*(\d+)/g,
+  hostId: /"host_?id"\s*:\s*"?(\d+)/gi,
+  items: /"items"\s*:\s*(\["(?:[^"\\]|\\.)*"(?:\s*,\s*"(?:[^"\\]|\\.)*")*\])/g,
+};
 
 /** True when the page state says the listing does not exist or is hidden. */
 export function isMissingListing(state: unknown): boolean {
@@ -72,11 +84,34 @@ export function isMissingListing(state: unknown): boolean {
   return false;
 }
 
-function findLocation(state: unknown): Record<string, unknown> | null {
-  for (const obj of objects(state)) {
-    if (typeof obj['isExactLocation'] === 'boolean' && isNumber(obj['latitude']) && isNumber(obj['longitude'])) {
-      return obj;
-    }
+const EXACT_LOCATION_KEY = /exact.*location/i;
+const LAT_KEY = /^lat(itude)?$/i;
+const LNG_KEY = /^(lng|long|longitude)$/i;
+const ADDRESS_KEY = /^exact.*address$/i;
+
+function firstKey<T>(obj: Record<string, unknown>, key: RegExp, accept: (v: unknown) => v is T): T | null {
+  for (const [k, v] of Object.entries(obj)) if (key.test(k) && accept(v)) return v;
+  return null;
+}
+
+/** The location object: the one with a boolean key like isExactLocation. */
+function findLocation(docs: unknown[]): { lat: number | null; lng: number | null; exact: boolean; address: string | null } | null {
+  for (const obj of objects(docs)) {
+    const exact = firstKey(obj, EXACT_LOCATION_KEY, (v): v is boolean => typeof v === 'boolean');
+    if (exact === null) continue;
+    return {
+      exact,
+      lat: firstKey(obj, LAT_KEY, isNumber),
+      lng: firstKey(obj, LNG_KEY, isNumber),
+      address: firstKey(obj, ADDRESS_KEY, isString),
+    };
+  }
+  return null;
+}
+
+function jsonLdCoordinate(docs: unknown[]): { lat: number; lng: number } | null {
+  for (const obj of objects(docs)) {
+    if (isNumber(obj['latitude']) && isNumber(obj['longitude'])) return { lat: obj['latitude'], lng: obj['longitude'] };
   }
   return null;
 }
@@ -109,11 +144,22 @@ function accessOf(word: string | undefined): 'private' | 'dedicated' | 'shared' 
   return w === 'private' || w === 'dedicated' || w === 'shared' ? w : null;
 }
 
-function overviewItems(state: unknown): string[] {
-  for (const obj of objects(state)) {
-    if (obj['__typename'] === 'StaysPdpOverview') return asArray(obj['items']).filter(isString);
+/** Every overview-style list of strings, such as ["5 guests", "2 bedrooms", "3 beds", "1 bath"]. */
+function overviewItems(docs: unknown[], html: string): string[] {
+  const lines: string[] = [];
+  for (const obj of objects(docs)) {
+    const items = obj['items'];
+    if (Array.isArray(items) && items.length > 0 && items.every(isString)) lines.push(...items);
   }
-  return [];
+  if (lines.length > 0) return lines;
+  for (const m of html.matchAll(RAW.items)) {
+    try {
+      lines.push(...(JSON.parse(m[1]!) as string[]));
+    } catch {
+      // An unparseable list carries nothing to read.
+    }
+  }
+  return lines;
 }
 
 function registration(state: unknown): string | null {
@@ -138,36 +184,49 @@ function htmlToText(html: string): string {
     .trim();
 }
 
-function host(state: unknown): Host | null {
+const TIME_AS_HOST_KEY = /^time_?as_?host$/i;
+
+/** The primary host's account id: the page's one DemandUser id, else the analytics hostId. */
+function hostId(docs: unknown[], html: string): string | null {
   const ids = new Set<string>();
-  for (const obj of objects(state)) {
+  for (const obj of objects(docs)) {
     for (const value of Object.values(obj)) {
       const id = decodeNodeId(value, 'DemandUser');
       if (id) ids.add(id);
     }
   }
-  for (const obj of objects(state)) {
-    const passport = obj['passportData'];
-    if (!isRecord(passport) || !('about' in obj)) continue;
-    const id = decodeNodeId(passport['userId'], 'DemandUser');
-    if (!id) continue;
-    const about = obj['about'];
-    const time = asRecord(passport['timeAsHost']);
-    const years = asNumber(time['years']);
-    const months = asNumber(time['months']);
-    return {
-      id,
-      name: asString(passport['name']),
-      about: isRecord(about)
-        ? (asString(about['source']) ?? asString(about['localizedString']) ?? asString(about['localizedStringWithTranslationPreference']))
-        : null,
-      timeAsHost: years !== null && months !== null ? { years, months } : null,
-    };
+  if (ids.size === 1) return [...ids][0]!;
+  if (ids.size > 1) return null;
+  return soleMatch(html, RAW.hostId);
+}
+
+/**
+ * The host card: the one object with a timeAsHost key, beside the bio. A card
+ * naming another account than the page's host is ignored.
+ */
+function host(docs: unknown[], html: string): Host | null {
+  const id = hostId(docs, html);
+  if (!id) return null;
+  for (const obj of objects(docs)) {
+    for (const card of Object.values(obj)) {
+      if (!isRecord(card) || !Object.keys(card).some((k) => TIME_AS_HOST_KEY.test(k))) continue;
+      const cardId = decodeNodeId(firstKey(card, /^user_?id$/i, isString), 'DemandUser');
+      if (cardId !== id) continue;
+      const time = asRecord(firstKey(card, TIME_AS_HOST_KEY, isRecord));
+      const years = asNumber(time['years']);
+      const months = asNumber(time['months']);
+      const about = obj['about'];
+      return {
+        id,
+        name: asString(card['name']),
+        about: isRecord(about)
+          ? (asString(about['source']) ?? asString(about['localizedString']) ?? asString(about['localizedStringWithTranslationPreference']))
+          : null,
+        timeAsHost: years !== null && months !== null ? { years, months } : null,
+      };
+    }
   }
-  if (ids.size === 1) {
-    return { id: [...ids][0]!, name: null, about: null, timeAsHost: null };
-  }
-  return null;
+  return { id, name: null, about: null, timeAsHost: null };
 }
 
 /** The longest media tour, in the host's order. Hero media is reordered for the header collage. */
@@ -200,42 +259,57 @@ function sharingTitleItems(state: unknown): string[] {
 
 /** The first matching line whose count parses, else the first matching line. */
 function pickLine<T extends { count: number | null }>(lines: string[], match: RegExp, parse: (t: string) => T): (T & { text: string }) | null {
-  const candidates = lines.filter((t) => match.test(t)).map((text) => ({ ...parse(text), text }));
+  const candidates = [...new Set(lines)].filter((t) => match.test(t)).map((text) => ({ ...parse(text), text }));
   return candidates.find((c) => c.count !== null) ?? candidates[0] ?? null;
 }
 
 export function parseListingPage(id: ListingId, html: string): Listing {
-  const trees = pageState(html);
-  const state = trees[0];
-  if (isMissingListing(state)) throw new AirbnbError('NotFound', `listing ${id} is removed or hidden`);
-  const location = findLocation(state);
-  if (!location) throw new ShapeError('listing page has no location object');
+  const { json, jsonLd } = pageDocs(html);
+  if (isMissingListing(json)) throw new AirbnbError('NotFound', `listing ${id} is removed or hidden`);
 
-  const roomTypes = distinct(state, 'roomType', isString);
-  const roomTypeText = roomTypes.find((t) => t in ROOM_TYPES) ?? roomTypes[0] ?? null;
-  const lines = [...overviewItems(state), ...sharingTitleItems(state)];
+  const location = findLocation(json);
+  const ld = jsonLdCoordinate(jsonLd);
+  const rawExact = soleMatch(html, RAW.exactLocation);
+  const lat = location?.lat ?? ld?.lat ?? null;
+  const lng = location?.lng ?? ld?.lng ?? null;
+  const exact = location?.exact ?? (rawExact === null ? null : rawExact === 'true');
+
+  const roomTypes = distinct(json, 'roomType', isString);
+  const roomTypeText = roomTypes.length === 1 ? roomTypes[0]! : roomTypes.find((t) => t in ROOM_TYPES) ?? soleMatch(html, RAW.roomType);
+  const rawNumber = (pattern: RegExp) => {
+    const v = soleMatch(html, pattern);
+    return v === null ? null : Number(v);
+  };
+  const guestCapacity = only(json, 'personCapacity', isNumber) ?? rawNumber(RAW.personCapacity);
+  const bedCount = only(json, 'bedCount', isNumber) ?? rawNumber(RAW.bedCount);
+
+  if (lat === null && roomTypeText === null && guestCapacity === null) {
+    // Nothing on the page reads as a listing: Airbnb served something else.
+    throw new MarkerMissingError('listing page has none of the listing data markers');
+  }
+  if (lat === null || lng === null) throw new ShapeError('listing page has no coordinate');
+
+  const lines = [...overviewItems(json, html), ...sharingTitleItems(json)];
   const bedrooms = pickLine(lines, /\bbedrooms?\b|^\s*studio\s*$/i, (t) => ({ count: parseBedrooms(t) }));
   const bathrooms = pickLine(lines, /\bbath/i, parseBathrooms);
   const bedLine = lines.find((t) => /^\s*\d+\s+beds?\s*$/i.test(t));
-  const beds = only(trees, 'bedCount', isNumber) ?? (bedLine ? Number(/\d+/.exec(bedLine)![0]) : null);
+  const lineBeds = bedLine ? Number(/\d+/.exec(bedLine)![0]) : null;
+  // A bedCount of 0 with no bed line on the page means the host listed no beds, not that there are none.
+  const beds = bedCount === 0 && lineBeds === null ? null : (bedCount ?? lineBeds);
 
   return {
     id,
-    location: {
-      lat: location['latitude'] as number,
-      lng: location['longitude'] as number,
-      exact: asBoolean(location['isExactLocation']),
-    },
-    address: asString(location['exactAddress']),
+    location: { lat, lng, exact },
+    address: location?.address ?? null,
     roomType: roomTypeText ? (ROOM_TYPES[roomTypeText] ?? null) : null,
-    propertyType: only(state, 'propertyType', (v): v is string => typeof v === 'string' && /^[A-Z][A-Z_]*$/.test(v)),
-    guestCapacity: only(state, 'personCapacity', isNumber),
+    propertyType: only(json, 'propertyType', (v): v is string => typeof v === 'string' && /^[A-Z][A-Z_]*$/.test(v)),
+    guestCapacity,
     beds,
     bedrooms,
     bathrooms,
-    registration: registration(state),
-    host: host(state),
-    photoUrls: photos(state),
+    registration: registration(json),
+    host: host(json, html),
+    photoUrls: photos(json),
   };
 }
 

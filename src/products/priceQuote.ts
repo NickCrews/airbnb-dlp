@@ -54,6 +54,28 @@ export function lineTotal(line: Record<string, unknown>): number | null {
   return null;
 }
 
+/**
+ * The exact total: the sum of the breakdown's line items, without summary
+ * lines such as "Price after discount". The displayed total is rounded to
+ * whole units, so the sum is used only when it rounds to it.
+ */
+export function exactTotal(price: Record<string, unknown>, displayed: number): number {
+  let sum = 0;
+  let lines = 0;
+  for (const group of asArray(asRecord(price['explanationData'])['priceDetails'])) {
+    for (const item of asArray(asRecord(group)['items'])) {
+      const it = asRecord(item);
+      if (it['__typename'] === 'HighlightExplanationLineItem') continue;
+      const amount = parseAmount(it['priceString']);
+      if (amount === null) continue;
+      sum += amount;
+      lines++;
+    }
+  }
+  const rounded = Math.round(sum * 100) / 100;
+  return lines > 0 && Math.abs(rounded - displayed) < 1 ? rounded : displayed;
+}
+
 export function breakdownLines(price: Record<string, unknown>): string[] {
   const lines: string[] = [];
   for (const group of asArray(asRecord(price['explanationData'])['priceDetails'])) {
@@ -77,7 +99,7 @@ export function parsePriceQuote(json: unknown, currency: string): PriceQuote {
   }
   const total = lineTotal(asRecord(price['primaryLine']));
   if (total === null) throw new ShapeError('price line has no total');
-  return { total: { amount: total, currency }, breakdown: breakdownLines(price) };
+  return { total: { amount: exactTotal(price, total), currency }, breakdown: breakdownLines(price) };
 }
 
 export async function fetchPriceQuote(call: Call, stay: Stay): Promise<PriceQuote> {

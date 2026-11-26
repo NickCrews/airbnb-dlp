@@ -53,6 +53,8 @@ export interface Cell {
 export interface SearchPage {
   listings: SearchListing[];
   pageCount: number;
+  /** Airbnb's count of all matches, beyond the page. */
+  resultCount: number | null;
   bounds: BBox | null;
 }
 
@@ -99,12 +101,17 @@ export function inBox(box: BBox, lat: number, lng: number): boolean {
   return box.west <= box.east ? lng >= box.west && lng <= box.east : lng >= box.west || lng <= box.east;
 }
 
+/** Listings a piece should expect at most, below the 40 a page holds, so most pieces fit on their first try. */
+export const TARGET_PER_PIECE = 30;
+
 /**
- * Halves a price band. `price_max=X` and `price_min=X` are complementary, so
- * halves that share a boundary neither overlap nor leave a gap. Null when the
- * band is already one unit wide.
+ * Splits a price band into pieces of equal width, enough that each holds about
+ * TARGET_PER_PIECE of `count` listings; halves it when the count is unknown.
+ * `price_max=X` and `price_min=X` are complementary, so pieces that share a
+ * boundary neither overlap nor leave a gap. Null when the band is already one
+ * unit wide. An open-ended band splits off one bounded piece.
  */
-export function splitBand(min: number, max: number | null): [[number, number | null], [number, number | null]] | null {
+export function splitBand(min: number, max: number | null, count: number | null = null): [number, number | null][] | null {
   if (max === null) {
     const mid = Math.max(min * 2, min + 100);
     return [
@@ -112,12 +119,14 @@ export function splitBand(min: number, max: number | null): [[number, number | n
       [mid, null],
     ];
   }
-  if (max - min <= MIN_PRICE_BAND) return null;
-  const mid = Math.floor((min + max) / 2);
-  return [
-    [min, mid],
-    [mid, max],
-  ];
+  const width = max - min;
+  if (width <= MIN_PRICE_BAND) return null;
+  const wanted = count === null ? 2 : Math.ceil(count / TARGET_PER_PIECE);
+  const pieces = Math.max(2, Math.min(wanted, 16, Math.floor(width / MIN_PRICE_BAND)));
+  const edges = Array.from({ length: pieces + 1 }, (_, i) => (i === pieces ? max : min + Math.floor((width * i) / pieces)));
+  const bands: [number, number | null][] = [];
+  for (let i = 0; i < pieces; i++) if (edges[i + 1]! > edges[i]!) bands.push([edges[i]!, edges[i + 1]!]);
+  return bands;
 }
 
 /** The seed bands clipped to the query's own price range. */
@@ -171,6 +180,11 @@ export function rawParams(query: SearchQuery, cell: Cell | null): RawParam[] {
     const nights = dayNumber(query.stay.checkOut) - dayNumber(query.stay.checkIn);
     params.push(['checkin', [query.stay.checkIn]], ['checkout', [query.stay.checkOut]]);
     params.push(['priceFilterNumNights', [String(nights)]]);
+  } else {
+    // Without dates Airbnb prices a stay it picks, and the price filter follows that
+    // stay. Left to itself it picks 1, 2 or 5 nights per request, so price bands
+    // shift between requests; a one-week trip length pins it to the same stay.
+    params.push(['flexibleTripLengths', ['one_week']]);
   }
   const g = query.guests;
   if (g?.adults !== undefined) params.push(['adults', [String(g.adults)]]);
@@ -228,6 +242,13 @@ export function parseRating(raw: unknown): { rating: number | null; reviewCount:
   };
 }
 
+/** "4.89 out of 5 average rating,  294 reviews" is 294. */
+export function parseReviewCountLabel(raw: unknown): number | null {
+  if (typeof raw !== 'string') return null;
+  const m = /(\d[\d,]*)\s+reviews?\b/i.exec(raw);
+  return m ? Number(m[1]!.replaceAll(',', '')) : null;
+}
+
 export function parseSearchListing(result: unknown, currency: string): SearchListing | null {
   const r = asRecord(result);
   if (r['__typename'] !== 'StaySearchResult') return null;
@@ -235,7 +256,8 @@ export function parseSearchListing(result: unknown, currency: string): SearchLis
   if (!id) return null;
   const lat = asNumber(dig(r, 'demandStayListing.location.coordinate.latitude'));
   const lng = asNumber(dig(r, 'demandStayListing.location.coordinate.longitude'));
-  const { rating, reviewCount } = parseRating(r['avgRatingLocalized']);
+  const { rating, reviewCount: shownCount } = parseRating(r['avgRatingLocalized']);
+  const reviewCount = shownCount ?? parseReviewCountLabel(r['avgRatingA11yLabel']);
   const sdp = asRecord(r['structuredDisplayPrice']);
   const line = asRecord(sdp['primaryLine']);
   let price: SearchListing['price'] = null;
@@ -301,6 +323,7 @@ export function parseSearchPage(json: unknown, currency: string): SearchPage {
   return {
     listings,
     pageCount: asArray(dig(results, 'paginationInfo.pageCursors')).length,
+    resultCount: asNumber(dig(results, 'filters.filterPanel.resultCount')),
     bounds: parseBounds(search),
   };
 }
@@ -382,14 +405,15 @@ export async function runSearch(
           await yieldPage(page);
           return;
         }
-        const bands = splitBand(cell.min, cell.max);
+        const bands = splitBand(cell.min, cell.max, page.resultCount);
         if (bands) {
-          for (const [min, max] of bands) queue.push({ box: cell.box, min, max });
+          // Depth first: a split piece runs before the next seed band, so listings arrive early and a budget-limited search still returns many.
+          queue.unshift(...bands.map(([min, max]) => ({ box: cell.box, min, max })));
           return;
         }
         const halves = splitBox(cell.box);
         if (halves) {
-          for (const box of halves) queue.push({ ...cell, box });
+          queue.unshift(...halves.map((box) => ({ ...cell, box })));
           return;
         }
         await yieldPage(page);

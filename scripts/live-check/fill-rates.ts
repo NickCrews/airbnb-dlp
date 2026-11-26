@@ -1,7 +1,13 @@
 import type { Listing } from '../../src/types.ts';
 import type { Area, Failure, FillRates, Report, Thresholds } from './contract.ts';
 
-const share = (items: Listing[], has: (l: Listing) => boolean) => (items.length === 0 ? NaN : items.filter(has).length / items.length);
+/** Below this many listings a fill rate says too little to judge, so it is left out. */
+export const MIN_SAMPLE = 5;
+
+const share = (items: Listing[], has: (l: Listing) => boolean) =>
+  items.length < MIN_SAMPLE ? NaN : items.filter(has).length / items.length;
+
+export const OUTDOOR_TYPES = new Set(['CAMPSITE', 'TENT', 'RV']);
 
 const FIELDS: Record<string, (l: Listing) => boolean> = {
   location: (l) => l.location !== null,
@@ -17,7 +23,8 @@ const FIELDS: Record<string, (l: Listing) => boolean> = {
 export function fillRates(listings: Listing[], areas: Area[], sampled: Map<Area, string[]>): FillRates {
   const rates: FillRates = {};
   for (const [field, has] of Object.entries(FIELDS)) rates[field] = share(listings, has);
-  const entire = listings.filter((l) => l.roomType === 'entire_home');
+  // Campsites, tents and RVs have no bedroom line on Airbnb, so they are not counted.
+  const entire = listings.filter((l) => l.roomType === 'entire_home' && !OUTDOOR_TYPES.has(l.propertyType ?? ''));
   rates['bedroomsOfEntireHomes'] = share(entire, (l) => l.bedrooms?.count != null);
   rates['exactLocation'] = share(listings.filter((l) => l.location?.exact != null), (l) => l.location!.exact === true);
   for (const area of areas) {
