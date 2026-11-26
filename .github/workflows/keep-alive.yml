@@ -1,0 +1,20 @@
+# GitHub disables scheduled workflows in public repositories after 60 days
+# without activity. Re-enabling the live check monthly keeps its schedule alive.
+name: Keep alive
+on:
+  schedule:
+    - cron: '41 3 1 * *'
+  workflow_dispatch:
+permissions:
+  actions: write
+
+jobs:
+  enable:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for wf in live-check.yml keep-alive.yml; do
+            gh api -X PUT "repos/${{ github.repository }}/actions/workflows/$wf/enable"
+          done

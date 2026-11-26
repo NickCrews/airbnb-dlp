@@ -1,0 +1,52 @@
+{
+  "name": "airbnb-dlp",
+  "version": "0.1.0",
+  "description": "Airbnb listing data for any area, kept working by a scheduled live check and an agent repair loop.",
+  "license": "MIT",
+  "type": "module",
+  "repository": "github:NickCrews/airbnb-dlp",
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "node": "./dist/entry-native.js",
+      "bun": "./dist/entry-native.js",
+      "deno": "./dist/entry-native.js",
+      "browser": "./dist/index.js",
+      "worker": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node scripts/build.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint",
+    "test": "vitest run",
+    "api-snapshot": "node scripts/api-snapshot.ts",
+    "record": "node scripts/record.ts",
+    "prepack": "node scripts/build.ts",
+    "live-check": "node scripts/live-check/run.ts",
+    "path-check": "node scripts/path-check.ts"
+  },
+  "dependencies": {
+    "impit": "0.14.9"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "0.25.12",
+    "oxlint": "^1.95.0",
+    "playwright": "1.56.1",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.2"
+  },
+  "packageManager": "pnpm@10.28.0"
+}

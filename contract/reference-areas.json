@@ -1,0 +1,8 @@
+{
+  "areas": [
+    { "id": "austin-tx", "kind": "dense", "bbox": { "south": 30.20, "west": -97.80, "north": 30.33, "east": -97.68 }, "minListings": 100, "registrationLaw": true },
+    { "id": "brewster-county-tx", "kind": "rural", "bbox": { "south": 29.0, "west": -103.8, "north": 30.7, "east": -102.4 }, "minListings": 50, "registrationLaw": false },
+    { "id": "hilo-hi", "kind": "hawaii", "bbox": { "south": 19.60, "west": -155.20, "north": 19.80, "east": -154.95 }, "minListings": 100, "registrationLaw": true },
+    { "id": "anchorage-ak", "kind": "alaska", "bbox": { "south": 61.05, "west": -150.05, "north": 61.25, "east": -149.65 }, "minListings": 100, "registrationLaw": true }
+  ]
+}

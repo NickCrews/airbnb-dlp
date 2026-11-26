@@ -1,0 +1,32 @@
+# Every maintainer-only path. Code-owner review is required only for these; the
+# repair agent's pull requests touch none of them, which the path-allowlist check enforces.
+
+/contract/ @NickCrews
+/.github/ @NickCrews
+/AGENTS.md @NickCrews
+/CLAUDE.md @NickCrews
+/.gemini/ @NickCrews
+/package.json @NickCrews
+/pnpm-lock.yaml @NickCrews
+/pnpm-workspace.yaml @NickCrews
+/.npmrc @NickCrews
+/scripts/live-check/ @NickCrews
+/scripts/path-check.ts @NickCrews
+/scripts/api-snapshot.ts @NickCrews
+/scripts/build.ts @NickCrews
+/lint/ @NickCrews
+/.oxlintrc.json @NickCrews
+/tsconfig.json @NickCrews
+/tsconfig.build.json @NickCrews
+/src/classify.ts @NickCrews
+/src/identity.ts @NickCrews
+/src/scheduler.ts @NickCrews
+/src/defaults.ts @NickCrews
+/src/transport/ @NickCrews
+/src/types.ts @NickCrews
+/src/public.ts @NickCrews
+/src/errors.ts @NickCrews
+/src/index.ts @NickCrews
+/src/entry-native.ts @NickCrews
+/LICENSE @NickCrews
+/.github/CODEOWNERS @NickCrews

@@ -1,0 +1,108 @@
+name: Live check
+on:
+  schedule:
+    - cron: '17 */4 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths: ['src/**', 'fixtures/**', 'scripts/live-check/**', 'contract/**']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: live-check-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    name: live-check (${{ matrix.runtime }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [node, bun, deno]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - if: matrix.runtime == 'bun'
+        uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.4.4 }
+      - if: matrix.runtime == 'deno'
+        uses: denoland/setup-deno@v2
+        with: { deno-version: 2.9.x }
+      - name: Fetch earlier reports for baselines
+        if: matrix.runtime == 'node'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .live-check/history
+          gh run list --workflow live-check.yml --event schedule --status completed --limit 90 \
+            --json databaseId,createdAt --jq '.[] | select((now - (.createdAt | fromdateiso8601)) < 15*86400) | .databaseId' |
+          while read -r id; do
+            gh run download "$id" -n live-check-report-node -D ".live-check/history/$id" 2>/dev/null || true
+          done
+      - name: Run
+        id: run
+        env:
+          SIZE: ${{ (github.event_name == 'pull_request' || matrix.runtime != 'node') && '--small' || '' }}
+        run: |
+          case "${{ matrix.runtime }}" in
+            node) node scripts/live-check/run.ts $SIZE --history .live-check/history --out .live-check/out ;;
+            bun)  bun scripts/live-check/run.ts $SIZE --out .live-check/out ;;
+            deno) deno run -A scripts/live-check/run.ts $SIZE --out .live-check/out ;;
+          esac
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: live-check-report-${{ matrix.runtime }}
+          path: .live-check/out/report.json
+          retention-days: 15
+          if-no-files-found: ignore
+      - name: Upload recorded exchanges
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: live-check-${{ matrix.runtime }}
+          path: .live-check/out/recordings.json.gz
+          retention-days: 30
+          if-no-files-found: ignore
+
+  file-issues:
+    name: file issues
+    needs: run
+    if: always() && github.event_name == 'schedule' && needs.run.result == 'failure'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 22 }
+      - uses: actions/download-artifact@v5
+        with: { pattern: live-check-report-*, path: .live-check/now }
+      - name: Fetch earlier reports
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .live-check/history
+          gh run list --workflow live-check.yml --event schedule --status completed --limit 12 --json databaseId --jq '.[].databaseId' |
+          while read -r id; do
+            [ "$id" = "${{ github.run_id }}" ] && continue
+            gh run download "$id" -n live-check-report-node -D ".live-check/history/$id" 2>/dev/null || true
+          done
+      # Issues opened with the default GITHUB_TOKEN start no workflow, so the
+      # live-check GitHub App files them.
+      - uses: actions/create-github-app-token@v2
+        id: app
+        with:
+          app-id: ${{ vars.LIVE_CHECK_APP_ID }}
+          private-key: ${{ secrets.LIVE_CHECK_APP_PRIVATE_KEY }}
+      - name: File
+        env:
+          GITHUB_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          for report in .live-check/now/*/report.json; do
+            node scripts/live-check/file-issues.ts "$report" --history .live-check/history
+          done

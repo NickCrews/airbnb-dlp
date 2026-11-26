@@ -1,0 +1,26 @@
+# Turns on auto-merge for the repair agent's pull requests. The ruleset's
+# required checks (CI, fixtures on every runtime, the live check, the path
+# allowlist) decide whether it merges; otherwise it waits for the maintainer.
+# The workflow merges, not the agent: the agent's token cannot.
+name: Auto-merge agent repairs
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+permissions:
+  contents: read
+
+jobs:
+  enable:
+    if: vars.AGENT_BOT_LOGIN != '' && github.event.pull_request.user.login == vars.AGENT_BOT_LOGIN && !github.event.pull_request.draft
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app
+        with:
+          app-id: ${{ vars.LIVE_CHECK_APP_ID }}
+          private-key: ${{ secrets.LIVE_CHECK_APP_PRIVATE_KEY }}
+      - name: Enable auto-merge
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr merge "$PR" --repo "${{ github.repository }}" --auto --squash

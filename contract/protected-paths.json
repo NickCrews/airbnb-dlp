@@ -1,0 +1,33 @@
+{
+  "comment": "Paths only the maintainer changes. A pull request by the repair agent that touches any of them fails the path-allowlist check. Patterns are path prefixes; a trailing slash means a directory.",
+  "protected": [
+    "contract/",
+    ".github/",
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".gemini/",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    ".npmrc",
+    "scripts/live-check/",
+    "scripts/path-check.ts",
+    "scripts/api-snapshot.ts",
+    "scripts/build.ts",
+    "lint/",
+    ".oxlintrc.json",
+    "tsconfig.json",
+    "tsconfig.build.json",
+    "src/classify.ts",
+    "src/identity.ts",
+    "src/scheduler.ts",
+    "src/defaults.ts",
+    "src/transport/",
+    "src/types.ts",
+    "src/public.ts",
+    "src/errors.ts",
+    "src/index.ts",
+    "src/entry-native.ts",
+    "LICENSE"
+  ]
+}

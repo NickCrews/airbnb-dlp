@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "jsPlugins": ["./lint/no-ambient-io.js"],
+  "categories": { "correctness": "error" },
+  "rules": {},
+  "ignorePatterns": ["dist/**", "node_modules/**"],
+  "overrides": [
+    {
+      "files": ["src/**/*.ts"],
+      "rules": { "airbnb-dlp/no-ambient-io": "error" }
+    },
+    {
+      "files": ["src/defaults.ts", "src/testing/**", "src/transport/**"],
+      "rules": { "airbnb-dlp/no-ambient-io": "off" }
+    }
+  ]
+}

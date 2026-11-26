@@ -1,0 +1,30 @@
+{
+  "requestBudget": 150,
+  "requestsPerSecond": 1,
+  "sampleListingsPerArea": 8,
+  "fetchSuccessShare": { "listings": 0.875, "calendars": 0.875, "priceQuotes": 0.75, "reviews": 0.875 },
+  "baselineDays": 14,
+  "baselineTolerance": 0.15,
+  "starting": {
+    "listingFields": {
+      "location": 0.9,
+      "roomType": 0.9,
+      "guestCapacity": 0.9,
+      "host": 0.9,
+      "photoUrls": 0.9,
+      "beds": 0.75,
+      "bathrooms": 0.9
+    },
+    "bathroomsWhereHotelsDominate": 0.5,
+    "bedroomsOfEntireHomes": 0.9,
+    "exactLocationShare": { "min": 0.1, "max": 0.9 },
+    "searchCardsWithPrice": 0.9
+  },
+  "ranges": {
+    "nightlyPriceUsd": { "min": 10, "max": 20000 },
+    "calendarMonths": 12
+  },
+  "coverage": { "auditBoxes": 3, "maxMissShare": 0.05 },
+  "blockedRunsBeforeMaintainer": 2,
+  "transientHoursBeforeMaintainer": 24
+}

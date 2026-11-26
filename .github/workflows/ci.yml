@@ -1,0 +1,75 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - name: API snapshot
+        run: pnpm api-snapshot
+      - run: pnpm build
+
+  fixtures:
+    name: fixtures (${{ matrix.runtime }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [node, bun, deno, browser]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - if: matrix.runtime == 'bun'
+        uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.4.4 }
+      - if: matrix.runtime == 'deno'
+        uses: denoland/setup-deno@v2
+        with: { deno-version: 2.9.x }
+      - if: matrix.runtime == 'node'
+        run: node test/run-fixtures.ts
+      - if: matrix.runtime == 'bun'
+        run: bun test/run-fixtures.ts
+      - if: matrix.runtime == 'deno'
+        run: deno run -A test/run-fixtures.ts
+      - if: matrix.runtime == 'browser'
+        run: |
+          npx playwright install --with-deps chromium
+          node test/run-fixtures-browser.ts
+
+  # Required on every pull request. It fails only when the repair agent's
+  # pull request touches a maintainer-only path.
+  path-allowlist:
+    name: path-allowlist
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }
+      - name: Check protected paths
+        env:
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          AGENT: ${{ vars.AGENT_BOT_LOGIN }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$AGENT" ] && [ "$AUTHOR" = "$AGENT" ]; then
+            node scripts/path-check.ts "$BASE" HEAD
+          else
+            echo "not an agent pull request; protected paths need code-owner review instead"
+          fi

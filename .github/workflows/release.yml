@@ -1,0 +1,47 @@
+# A merge to main that changes the package publishes a patch release. The
+# version is the next patch after the latest published one, or package.json's
+# version when the maintainer has raised the major or minor there.
+name: Release
+on:
+  push:
+    branches: [main]
+    paths: ['src/**', 'package.json']
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with: { node-version: 22, cache: pnpm, registry-url: 'https://registry.npmjs.org' }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - name: Choose version
+        id: version
+        run: |
+          declared=$(node -p "require('./package.json').version")
+          published=$(npm view airbnb-dlp version 2>/dev/null || echo "")
+          next=$(node -e '
+            const [d, p] = process.argv.slice(1);
+            const parse = (v) => v.split(".").map(Number);
+            if (!p) { console.log(d); process.exit(0); }
+            const [dM, dm] = parse(d), [pM, pm, pp] = parse(p);
+            console.log(dM > pM || (dM === pM && dm > pm) ? `${dM}.${dm}.0` : `${pM}.${pm}.${pp + 1}`);
+          ' "$declared" "$published")
+          npm pkg set version="$next"
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+      - run: pnpm build
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "v${{ steps.version.outputs.version }}" --target "${{ github.sha }}" --generate-notes
