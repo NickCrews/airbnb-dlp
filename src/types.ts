@@ -190,7 +190,7 @@ export interface Listing {
   /** Airbnb's propertyType enum value, e.g. 'HOUSE', 'TENT', 'HOSTEL'. */
   propertyType: PropertyType | null;
   guestCapacity: number | null;
-  /** A bunk bed counts as 2. */
+  /** Airbnb's bed count, as it reports it: a bunk bed counts as 2, and 0 can mean the host entered none. */
   beds: number | null;
   /**
    * Parsed from the page's bedroom line: "2 bedrooms" is 2, "Studio" is 0.

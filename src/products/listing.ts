@@ -294,8 +294,7 @@ export function parseListingPage(id: ListingId, html: string): Listing {
   const bathrooms = pickLine(lines, /\bbath/i, parseBathrooms);
   const bedLine = lines.find((t) => /^\s*\d+\s+beds?\s*$/i.test(t));
   const lineBeds = bedLine ? Number(/\d+/.exec(bedLine)![0]) : null;
-  // A bedCount of 0 with no bed line on the page means the host listed no beds, not that there are none.
-  const beds = bedCount === 0 && lineBeds === null ? null : (bedCount ?? lineBeds);
+  const beds = bedCount ?? lineBeds;
 
   return {
     id,
