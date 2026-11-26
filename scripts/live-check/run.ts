@@ -16,7 +16,7 @@ import { bookableStays, createClient } from '../../src/entry-native.ts';
 import type { AirbnbError, ErrorCategory } from '../../src/errors.ts';
 import { recordingTransport } from '../../src/testing/index.ts';
 import { impitTransport } from '../../src/transport/impit.ts';
-import type { BBox, Client, Listing, Outcome, Result, SearchHit, SearchQuery, Stay } from '../../src/types.ts';
+import type { BBox, Client, Listing, Outcome, Result, SearchHit, SearchQuery, Stay, Transport } from '../../src/types.ts';
 import { inBox } from '../../src/products/search.ts';
 import { safeToday, addDays } from '../../src/dates.ts';
 import { type Area, type Failure, type Report, loadContract, loadHistory, sampleEvenly } from './contract.ts';
@@ -35,7 +35,14 @@ const { areas: allAreas, thresholds } = loadContract();
 const areas = small ? allAreas.filter((a) => a.kind === 'rural').slice(0, 1) : allAreas;
 const perArea = small ? 4 : thresholds.sampleListingsPerArea;
 
-const transport = recordingTransport(impitTransport());
+/**
+ * LIVE_CHECK_SIMULATE=blocked answers every request with Airbnb's rate-limit
+ * response, for drills of the Blocked path. Nothing else is simulated: other
+ * drills break the code itself.
+ */
+const simulateBlocked = process.env.LIVE_CHECK_SIMULATE === 'blocked';
+const blockedTransport: Transport = async () => ({ status: 429, headers: { server: 'nginx' }, body: '<html><title>503 Service Unavailable</title></html>' });
+const transport = recordingTransport(simulateBlocked ? blockedTransport : impitTransport());
 const client: Client = createClient({
   transport,
   limits: { requestsPerSecond: thresholds.requestsPerSecond },
@@ -270,18 +277,22 @@ if (!blocked) failures.push(...checkFillRates(rates, history, thresholds));
 
 // ---------------------------------------------------------------- report
 
+// A block explains every other failure in the run (empty searches, missing
+// fields), so only the block is reported: anything else would send the agent
+// after a symptom of it.
+const reported = blocked ? failures.filter((f) => f.category === 'Blocked' && !f.check.endsWith('.complete')) : failures;
 const report: Report = {
   startedAt,
   finishedAt: new Date().toISOString(),
   small,
   requests,
-  passed: failures.length === 0,
-  failures,
+  passed: reported.length === 0,
+  failures: reported,
   fillRates: blocked ? null : rates,
 };
 mkdirSync(outDir, { recursive: true });
 writeFileSync(join(outDir, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
 if (!report.passed) writeFileSync(join(outDir, 'recordings.json.gz'), gzipSync(JSON.stringify(transport.recordings())));
-console.log(`${requests} requests; ${failures.length} failures`);
-for (const f of failures) console.log(`  [${f.category}] ${f.check}: ${f.message}`);
+console.log(`${requests} requests; ${reported.length} failures`);
+for (const f of reported) console.log(`  [${f.category}] ${f.check}: ${f.message}`);
 process.exitCode = report.passed ? 0 : 1;

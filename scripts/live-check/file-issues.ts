@@ -2,18 +2,33 @@
  * Files the live check's failures as issues: one open issue per failure
  * category, commented on by later runs. Run by the live-check workflow with a
  * GitHub App token, since issues opened with the default GITHUB_TOKEN start no
- * workflow. `node file-issues.ts <report.json> [--history <dir>]`.
+ * workflow. `node file-issues.ts <report.json> [--history <dir>] [--drill <branch>]`.
+ *
+ * With --drill, the report comes from a drill's sabotaged branch: every
+ * category is filed at once as a new issue labelled `drill`, naming the branch
+ * the repair targets, and the issue numbers are written to GITHUB_OUTPUT.
  *
  * Issue text names checks and counts only; it never quotes response content,
  * which hosts and guests write. The recorded exchanges are linked instead.
  */
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import type { ErrorCategory } from '../../src/errors.ts';
 import { type Failure, type Report, loadContract, loadHistory } from './contract.ts';
 
 export const LABEL = 'live-check';
 export const AGENT_LABEL = 'agent-repair';
 export const MAINTAINER_LABEL = 'needs-maintainer';
+export const DRILL_LABEL = 'drill';
+
+/** The line naming a drill's branch in its issue body. The agent workflow reads it back. */
+export function drillBranchLine(branch: string): string {
+  return `Repair branch: \`${branch}\``;
+}
+
+export function parseDrillBranch(body: string): string | null {
+  const m = /^Repair branch: `(drill\/[A-Za-z0-9._-]+)`$/m.exec(body);
+  return m ? m[1]! : null;
+}
 
 /** Who fixes each category. */
 export const OWNER: Record<ErrorCategory, 'agent' | 'maintainer'> = {
@@ -93,27 +108,39 @@ async function github(path: string, init: RequestInit = {}): Promise<any> {
 
 async function main() {
   const [reportPath, ...rest] = process.argv.slice(2);
-  if (!reportPath) throw new Error('usage: file-issues.ts <report.json> [--history <dir>]');
-  const i = rest.indexOf('--history');
-  const history = loadHistory(i >= 0 ? rest[i + 1] : undefined);
+  if (!reportPath) throw new Error('usage: file-issues.ts <report.json> [--history <dir>] [--drill <branch>]');
+  const flag = (name: string) => {
+    const i = rest.indexOf(name);
+    return i >= 0 ? rest[i + 1] : undefined;
+  };
+  const history = loadHistory(flag('--history'));
+  const drill = flag('--drill');
+  if (drill !== undefined && parseDrillBranch(drillBranchLine(drill)) !== drill) throw new Error(`not a drill branch: ${drill}`);
   const report = JSON.parse(readFileSync(reportPath, 'utf8')) as Report;
   const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
-  for (const category of categoriesToFile(report, history, Date.now())) {
+  const categories = drill ? [...new Set(report.failures.map((f) => f.category))] : categoriesToFile(report, history, Date.now());
+  const opened: number[] = [];
+  for (const category of categories) {
     const categoryLabel = `category:${category}`;
-    const open = (await github(`/issues?state=open&labels=${encodeURIComponent(`${LABEL},${categoryLabel}`)}`)) as { number: number }[];
-    const body = issueBody(category, report, runUrl);
-    if (open[0]) {
-      await github(`/issues/${open[0].number}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
-      console.log(`commented on #${open[0].number} (${category})`);
-      continue;
+    const body = drill ? `${issueBody(category, report, runUrl)}\n\n${drillBranchLine(drill)}` : issueBody(category, report, runUrl);
+    if (!drill) {
+      const open = (await github(`/issues?state=open&labels=${encodeURIComponent(`${LABEL},${categoryLabel}`)}`)) as { number: number; labels: { name: string }[] }[];
+      const existing = open.find((i) => !i.labels.some((l) => l.name === DRILL_LABEL));
+      if (existing) {
+        await github(`/issues/${existing.number}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
+        console.log(`commented on #${existing.number} (${category})`);
+        continue;
+      }
     }
-    const labels = [LABEL, categoryLabel, OWNER[category] === 'agent' ? AGENT_LABEL : MAINTAINER_LABEL];
+    const labels = [LABEL, categoryLabel, OWNER[category] === 'agent' ? AGENT_LABEL : MAINTAINER_LABEL, ...(drill ? [DRILL_LABEL] : [])];
     const issue = await github('/issues', {
       method: 'POST',
       body: JSON.stringify({ title: `Live check: ${category}`, body, labels }),
     });
+    opened.push(issue.number);
     console.log(`opened #${issue.number} (${category})`);
   }
+  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `issues=${opened.join(',')}\n`);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) await main();

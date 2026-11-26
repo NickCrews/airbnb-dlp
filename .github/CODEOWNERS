@@ -11,6 +11,7 @@
 /pnpm-workspace.yaml @NickCrews
 /.npmrc @NickCrews
 /scripts/live-check/ @NickCrews
+/scripts/drill/ @NickCrews
 /scripts/path-check.ts @NickCrews
 /scripts/api-snapshot.ts @NickCrews
 /scripts/build.ts @NickCrews

@@ -11,6 +11,7 @@
     "pnpm-workspace.yaml",
     ".npmrc",
     "scripts/live-check/",
+    "scripts/drill/",
     "scripts/path-check.ts",
     "scripts/api-snapshot.ts",
     "scripts/build.ts",
