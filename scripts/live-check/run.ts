@@ -177,7 +177,6 @@ const FILTERS: { name: string; query: Partial<SearchQuery>; card?: (h: SearchHit
     // Card prices include fees; the filter applies before them.
     card: (h) => !h.listing.price?.nightly || (h.listing.price.nightly.amount >= 80 && h.listing.price.nightly.amount <= 200),
   },
-  { name: 'roomTypes', query: { roomTypes: ['private_room'] }, page: (l) => l.roomType === 'private_room' },
   // Three-bedroom homes are rare in the cheap band, so this filter uses a higher one.
   { name: 'minBedrooms', query: { minBedrooms: 3, nightlyPrice: { min: 250, max: 260 } }, page: (l) => l.bedrooms?.count == null || l.bedrooms.count >= 3 },
   { name: 'propertyGroups', query: { propertyGroups: ['apartment'] }, page: (l) => l.propertyType === null || ['APARTMENT', 'CONDOMINIUM', 'SERVICED_APARTMENT', 'LOFT'].includes(l.propertyType) },

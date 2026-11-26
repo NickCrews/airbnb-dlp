@@ -120,7 +120,6 @@ export interface SearchQuery {
   guests?: Guests;
   /** Per night, in the client's currency. */
   nightlyPrice?: { min?: number; max?: number };
-  roomTypes?: RoomType[];
   minBedrooms?: number;
   minBeds?: number;
   minBathrooms?: number;

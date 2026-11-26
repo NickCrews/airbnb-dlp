@@ -141,7 +141,6 @@ export interface SearchQuery {
         min?: number;
         max?: number;
     };
-    roomTypes?: RoomType[];
     minBedrooms?: number;
     minBeds?: number;
     minBathrooms?: number;

@@ -16,14 +16,7 @@ import { AirbnbError } from '../errors.ts';
 import { ShapeError } from '../parse-errors.ts';
 import { asArray, asNumber, asRecord, asString, dig, isString, parseAmount } from '../json.ts';
 import { AMENITIES, PROPERTY_GROUP_IDS } from '../reference.ts';
-import type { BBox, RoomType, SearchHit, SearchListing, SearchQuery } from '../types.ts';
-
-export const ROOM_TYPE_FILTER: Record<RoomType, string> = {
-  entire_home: 'Entire home/apt',
-  private_room: 'Private room',
-  shared_room: 'Shared room',
-  hotel_room: 'Hotel room',
-};
+import type { BBox, SearchHit, SearchListing, SearchQuery } from '../types.ts';
 
 /** Seed price bands, per night; null is open-ended. Dense bands are split further. */
 export const PRICE_SEEDS: [number, number | null][] = [
@@ -191,7 +184,6 @@ export function rawParams(query: SearchQuery, cell: Cell | null): RawParam[] {
   if (g?.children !== undefined) params.push(['children', [String(g.children)]]);
   if (g?.infants !== undefined) params.push(['infants', [String(g.infants)]]);
   if (g?.pets !== undefined) params.push(['pets', [String(g.pets)]]);
-  if (query.roomTypes?.length) params.push(['roomTypes', query.roomTypes.map((t) => ROOM_TYPE_FILTER[t])]);
   if (query.minBedrooms !== undefined) params.push(['minBedrooms', [String(query.minBedrooms)]]);
   if (query.minBeds !== undefined) params.push(['minBeds', [String(query.minBeds)]]);
   if (query.minBathrooms !== undefined) params.push(['minBathrooms', [String(query.minBathrooms)]]);

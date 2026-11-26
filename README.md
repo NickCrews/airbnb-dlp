@@ -8,7 +8,7 @@ Unofficial; not affiliated with Airbnb, Inc.
 import { createClient, type SearchHit } from 'airbnb-dlp';
 
 const client = createClient();
-const search = client.search([{ area: { place: 'Austin, TX' }, roomTypes: ['entire_home'] }]);
+const search = client.search([{ area: { place: 'Austin, TX' }, minBedrooms: 2 }]);
 
 async function* ids(hits: AsyncIterable<SearchHit>) {
   for await (const hit of hits) yield hit.listing.id;
@@ -35,7 +35,7 @@ const { error, incomplete } = await search.outcome();
 
 Search is complete: each query splits itself by price and by area until no piece hits Airbnb's result cap. Without stay dates, Airbnb prices each listing for a one-week trip, and price filters apply to that price.
 
-Known limitation: Airbnb ignores the `shared_room` room-type filter and returns other room types. Search cards do not carry a room type, so the library cannot filter them itself; check `Listing.roomType` from `listings()`.
+Search has no room-type filter: Airbnb's own filter ignores some room types, and search cards do not say which a listing is. Filter on `Listing.roomType` from `listings()` instead.
 
 Every method is bulk and returns a `Batch`, modelled on fetch's `Response`. `items()` streams results as they finish, and `outcome()` resolves with what ended the call early, which inputs are incomplete, and how many requests were made. It never rejects. One listing failing yields a typed error for that item and the rest continue. A `Blocked` failure ends the call.
 
