@@ -89,7 +89,7 @@ Each error carries the last HTTP exchange, bodies included, for debugging.
 
 ## Request rate
 
-One client holds one request budget, shared by all its calls, and its pace adapts to Airbnb. It starts at 2 requests a second and speeds up while requests are served normally, up to 20 a second with 8 in flight. A rate limit (HTTP 429) halves the pace and pauses every request for as long as Airbnb's `Retry-After` asks, up to a minute; after three on one request, or a longer `Retry-After`, the call ends as `Blocked`. A challenge page, 403 or 428 ends the call at once. You can lower the ceilings with `createClient({ limits })`, cap a call with `maxRequests` or `maxDurationMs`, or pass an `AbortSignal`, but you cannot raise them. The `trace` option reports every change of pace. The client does not use proxies, rotate IP addresses or solve challenges.
+One client holds one request budget, shared by all its calls, and its pace adapts to Airbnb. It starts at 2 requests a second and speeds up while requests are served normally, up to ceilings of 100 a second and 32 in flight, set above what Airbnb sustains so that its rate limits decide the pace. A rate limit (HTTP 429) halves the pace and pauses every request for as long as Airbnb's `Retry-After` asks, up to a minute; after three on one request, or a longer `Retry-After`, the call ends as `Blocked`. A challenge page, 403 or 428 ends the call at once. You can lower the ceilings with `createClient({ limits })`, cap a call with `maxRequests` or `maxDurationMs`, or pass an `AbortSignal`, but you cannot raise them. The `trace` option reports every change of pace. The client does not use proxies, rotate IP addresses or solve challenges.
 
 ## Runtimes
 

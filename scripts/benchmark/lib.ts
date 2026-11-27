@@ -15,6 +15,8 @@ const root = new URL('../../', import.meta.url);
 export interface BenchmarkContract {
   /** Run the live check's pull-request set rather than the full one. */
   small: boolean;
+  /** The stress stage: search the area for `listings` ids, then fetch all their reviews at the implementation's own pace. */
+  stress: { area: string; nightlyPrice: { min: number; max: number }; listings: number; reviewsLimit: number };
   runners: number;
   minSpeedRatio: number;
 }
@@ -40,8 +42,10 @@ export interface ArmResult {
   wallMs: number;
   requests: number;
   bytes: number;
-  /** Responses Airbnb refused: 403, 428, 429 or a challenge page. */
+  /** Responses Airbnb refused outright: 403, 428 or a challenge page. */
   refusals: number;
+  /** Rate limits (HTTP 429), whether the client waited them out or not. */
+  rateLimits: number;
   retries: number;
   latencyMs: { p50: number; p95: number };
   /** Total time requests waited for the client's own pace and concurrency limits. */
@@ -49,10 +53,44 @@ export interface ArmResult {
   products: Partial<Record<Product, ProductMetrics>>;
   /** What ended a call early, if anything did. */
   error: ErrorCategory | null;
-  /** Whether its live check passed. */
+  /** The stress stage, or null when it did not run. */
+  stress: StressResult | null;
+  /** Whether its live check passed and its stress stage did not end early. */
   completed: boolean;
-  /** The live check's failures, for the summary. */
+  /** The live check's failures and the stress stage's ending, for the summary. */
   problems: string[];
+}
+
+/** What the stress stage measured: how fast the implementation sustained requests, and where Airbnb pushed back. */
+export interface StressResult {
+  ms: number;
+  requests: number;
+  /** Requests a second, over the whole stage. */
+  requestsPerSecond: number;
+  rateLimits: number;
+  refusals: number;
+  /** The fastest pace the client reached, in requests a second; null when the trace has no pace events. */
+  fastestPace: number | null;
+  /** Reviews fetched, of those asked for. */
+  items: number;
+  ok: number;
+  /** What ended the stage's calls early, if anything did. */
+  error: ErrorCategory | null;
+}
+
+/** The stress stage's numbers, from its own trace. */
+export function stressMetrics(events: TraceEvent[], run: { ms: number; items: number; ok: number; error: ErrorCategory | null }): StressResult {
+  let requests = 0;
+  let rateLimits = 0;
+  let refusals = 0;
+  let fastestPace: number | null = null;
+  for (const e of events) {
+    if (e.type === 'request') requests++;
+    else if (e.type === 'response' && e.status === 429) rateLimits++;
+    else if (e.type === 'response' && e.category === 'Blocked') refusals++;
+    else if (e.type === 'pace') fastestPace = Math.max(fastestPace ?? 0, e.requestsPerSecond);
+  }
+  return { ms: run.ms, requests, requestsPerSecond: requests / Math.max(run.ms / 1000, 0.001), rateLimits, refusals, fastestPace, items: run.items, ok: run.ok, error: run.error };
 }
 
 /** One machine's benchmark.json. */
@@ -90,13 +128,14 @@ export function median(values: number[]): number | null {
 }
 
 /** Metrics for one arm: performance from its trace, completion from its live-check report. */
-export function armMetrics(events: TraceEvent[], report: Report, meta: { source: string; commit: string | null; wallMs: number }): ArmResult {
+export function armMetrics(events: TraceEvent[], report: Report, meta: { source: string; commit: string | null; wallMs: number }, stress: StressResult | null = null): ArmResult {
   const products: Partial<Record<Product, ProductMetrics>> = {};
   const productOfCall = new Map<number, Product>();
   const startOfCall = new Map<number, number>();
   let requests = 0;
   let bytes = 0;
   let refusals = 0;
+  let rateLimits = 0;
   let retries = 0;
   let queuedMs = 0;
   let error: ErrorCategory | null = null;
@@ -121,7 +160,8 @@ export function armMetrics(events: TraceEvent[], report: Report, meta: { source:
       latencies.push(e.ms);
       const p = productOfCall.get(e.call);
       if (p) entry(p).bytes += e.bytes;
-      if (e.category === 'Blocked') refusals++;
+      if (e.status === 429) rateLimits++;
+      else if (e.category === 'Blocked') refusals++;
     } else if (e.type === 'retry') {
       retries++;
     }
@@ -134,13 +174,18 @@ export function armMetrics(events: TraceEvent[], report: Report, meta: { source:
     requests,
     bytes,
     refusals,
+    rateLimits,
     retries,
     latencyMs: { p50: percentile(latencies, 50), p95: percentile(latencies, 95) },
     queuedMs,
     products,
     error,
-    completed: report.passed,
-    problems: report.failures.map((f) => `[${f.category}] ${f.check}: ${f.message}`),
+    stress,
+    completed: report.passed && (stress === null || stress.error === null),
+    problems: [
+      ...report.failures.map((f) => `[${f.category}] ${f.check}: ${f.message}`),
+      ...(stress?.error ? [`stress stage ended early: ${stress.error}, after ${stress.requests} requests and ${stress.rateLimits} rate limits`] : []),
+    ],
   };
 }
 
@@ -153,7 +198,8 @@ export function merge(machines: MachineResult[], contract: BenchmarkContract, re
       source: arms[0]!.source,
       commit: arms[0]!.commit,
       completed: arms.filter((a) => a.completed).length,
-      refusals: arms.reduce((n, a) => n + a.refusals, 0),
+      // Hard refusals in either stage; rate limits waited out do not count.
+      refusals: arms.reduce((n, a) => n + a.refusals + (a.stress?.refusals ?? 0), 0),
       medianWallMs: median(arms.filter((a) => a.completed).map((a) => a.wallMs)),
     };
   };
@@ -192,7 +238,13 @@ const seconds = (ms: number | null) => (ms === null ? '–' : `${(ms / 1000).toF
 const kb = (bytes: number) => `${Math.round(bytes / 1024)} KB`;
 
 function armRow(machine: string, arm: string, a: ArmResult): string {
-  return `| ${machine} | ${arm} | ${a.completed ? 'passed' : 'failed'} | ${seconds(a.wallMs)} | ${a.requests} | ${a.refusals} | ${a.retries} | ${a.latencyMs.p50} / ${a.latencyMs.p95} ms | ${kb(a.bytes)} |`;
+  return `| ${machine} | ${arm} | ${a.completed ? 'passed' : 'failed'} | ${seconds(a.wallMs)} | ${a.requests} | ${a.refusals} | ${a.rateLimits} | ${a.retries} | ${a.latencyMs.p50} / ${a.latencyMs.p95} ms | ${kb(a.bytes)} |`;
+}
+
+function stressRow(machine: string, arm: string, s: StressResult | null): string[] {
+  if (!s) return [];
+  const pace = s.fastestPace === null ? '–' : `${s.fastestPace.toFixed(1)}/s`;
+  return [`| ${machine} | ${arm} | ${s.requestsPerSecond.toFixed(1)}/s | ${s.requests} | ${s.rateLimits} | ${s.refusals} | ${pace} | ${s.ok} of ${s.items} | ${s.error ?? 'finished'} |`];
 }
 
 export function machineSummary(m: MachineResult): string {
@@ -216,11 +268,24 @@ export function mergedSummary(r: MergedResult): string {
     '',
     ...r.verdict.reasons.map((x) => `- ${x}`),
     '',
-    '| Machine | Arm | Live check | Time | Requests | Refused | Retries | Latency p50 / p95 | Bytes |',
-    '|---|---|---|---|---|---|---|---|---|',
+    '| Machine | Arm | Completed | Time | Requests | Refused | Rate limits | Retries | Latency p50 / p95 | Bytes |',
+    '|---|---|---|---|---|---|---|---|---|---|',
     ...r.machines.flatMap((m) => [armRow(m.label, 'candidate', m.candidate), ...(m.base ? [armRow(m.label, 'base', m.base)] : [])]),
     '',
   ];
+  const stress = r.machines.flatMap((m) => [...stressRow(m.label, 'candidate', m.candidate.stress), ...stressRow(m.label, 'base', m.base?.stress ?? null)]);
+  if (stress.length > 0) {
+    lines.push(
+      '### Stress stage',
+      '',
+      'Reviews for a few hundred listings, as fast as each pace allows, until Airbnb rate-limits it.',
+      '',
+      '| Machine | Arm | Sustained | Requests | Rate limits | Refused | Fastest pace | Reviews fetched | Ended |',
+      '|---|---|---|---|---|---|---|---|---|',
+      ...stress,
+      '',
+    );
+  }
   const problems = r.machines.flatMap((m) =>
     [['candidate', m.candidate] as const, ['base', m.base] as const].flatMap(([arm, a]) => (a ? a.problems.map((p) => `- ${m.label} ${arm}: ${p}`) : [])),
   );

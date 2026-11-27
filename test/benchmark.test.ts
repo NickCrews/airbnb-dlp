@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { type ArmResult, type MachineResult, armMetrics, merge, mergedSummary } from '../scripts/benchmark/lib.ts';
+import { type ArmResult, type MachineResult, type StressResult, armMetrics, merge, mergedSummary } from '../scripts/benchmark/lib.ts';
 import type { Report } from '../scripts/live-check/contract.ts';
 import type { TraceEvent } from '../src/types.ts';
 
-const contract = { small: true, runners: 5, minSpeedRatio: 0.9 };
+const contract = { small: true, runners: 5, minSpeedRatio: 0.9, stress: { area: 'austin-tx', nightlyPrice: { min: 50, max: 1000 }, listings: 300, reviewsLimit: 6 } };
 
 function arm(wallMs: number, overrides: Partial<ArmResult> = {}): ArmResult {
   return {
@@ -14,11 +14,13 @@ function arm(wallMs: number, overrides: Partial<ArmResult> = {}): ArmResult {
     requests: 55,
     bytes: 1,
     refusals: 0,
+    rateLimits: 0,
     retries: 0,
     latencyMs: { p50: 1, p95: 2 },
     queuedMs: 0,
     products: {},
     error: null,
+    stress: null,
     completed: true,
     problems: [],
     ...overrides,
@@ -65,6 +67,18 @@ describe('benchmark verdict', () => {
     expect(slow.verdict.pass).toBe(false);
   });
 
+  it('fails a side whose stress stage ends early, and counts its hard refusals', () => {
+    const stress = (o: Partial<StressResult>): StressResult => ({ ms: 20_000, requests: 300, requestsPerSecond: 15, rateLimits: 4, refusals: 0, fastestPace: 30, items: 300, ok: 300, error: null, ...o });
+    const report: Report = { startedAt: '2026-11-27T00:00:00Z', finishedAt: '2026-11-27T00:00:01Z', small: true, requests: 55, passed: true, failures: [], fillRates: null };
+    const waitedOut = armMetrics([], report, { source: '.', commit: null, wallMs: 1 }, stress({}));
+    expect(waitedOut.completed).toBe(true);
+    const ended = armMetrics([], report, { source: '.', commit: null, wallMs: 1 }, stress({ error: 'Blocked' }));
+    expect(ended.completed).toBe(false);
+    expect(ended.problems.join(' ')).toContain('stress stage ended early: Blocked');
+    const refused = merge([machine('a', arm(50_000, { stress: stress({ refusals: 2 }) }), arm(50_000))], contract);
+    expect(refused.verdict.pass).toBe(false);
+  });
+
   it('reports absolute numbers without a base', () => {
     const r = merge([machine('local', arm(45_000), null)], contract);
     expect(r.speedRatio).toBeNull();
@@ -85,7 +99,7 @@ describe('benchmark metrics', () => {
     ];
     const report: Report = { startedAt: '2026-11-27T00:00:00Z', finishedAt: '2026-11-27T00:00:01Z', small: true, requests: 2, passed: false, failures: [{ category: 'Blocked', check: 'listings', message: 'Airbnb blocked the run' }], fillRates: null };
     const a = armMetrics(events, report, { source: '.', commit: null, wallMs: 1100 });
-    expect(a).toMatchObject({ requests: 2, refusals: 1, bytes: 1010, queuedMs: 905, error: 'Blocked', completed: false });
+    expect(a).toMatchObject({ requests: 2, refusals: 0, rateLimits: 1, bytes: 1010, queuedMs: 905, error: 'Blocked', completed: false });
     expect(a.products.listings).toMatchObject({ calls: 1, items: 2, requests: 2, ms: 1100, bytes: 1010 });
     expect(a.problems).toEqual(['[Blocked] listings: Airbnb blocked the run']);
   });

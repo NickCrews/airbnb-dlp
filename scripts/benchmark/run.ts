@@ -1,11 +1,13 @@
 /**
  * Benchmarks one machine: runs the live check (scripts/live-check/check.ts) on
- * the candidate implementation and, if given, on a base, and measures each
- * from the client's trace. The same command runs locally and on each runner of
- * the Benchmark workflow.
+ * the candidate implementation and, if given, on a base, then a stress stage
+ * that fetches reviews for a few hundred listings as fast as the
+ * implementation's pace allows, so Airbnb's real rate limit is met. Each side
+ * is measured from the client's trace. The same command runs locally and on
+ * each runner of the Benchmark workflow.
  *
  *   pnpm benchmark [--candidate <dir|git ref>] [--base <dir|git ref>] [--label <name>]
- *                  [--order candidate-first|base-first] [--out <dir>]
+ *                  [--order candidate-first|base-first] [--out <dir>] [--no-stress]
  *
  * --candidate  default: this working tree, uncommitted changes included.
  * --base       optional; a git ref is checked out into a temporary worktree.
@@ -13,20 +15,25 @@
  * --order      which runs first; the workflow alternates it across runners so
  *              neither side always gets the fresher IP address.
  * --out        default .benchmark. Writes benchmark.json, summary.md, and per
- *              side <side>.trace.ndjson, <side>.log.txt and <side>.report.json.
+ *              side <side>.trace.ndjson, <side>.stress.trace.ndjson,
+ *              <side>.log.txt and <side>.report.json.
+ * --no-stress  skip the stress stage: about 330 fewer requests a side.
  *
  * The workload, the checks and the measurement come from this checkout; only
  * the library under test comes from --candidate and --base. Exit code 1 when
- * the candidate's live check fails.
+ * the candidate does not complete: its live check fails or its stress stage
+ * ends early.
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import type { ErrorCategory } from '../../src/errors.ts';
 import type { TraceEvent } from '../../src/types.ts';
+import { loadContract } from '../live-check/contract.ts';
 import { type Library, liveCheck } from '../live-check/check.ts';
-import { type ArmResult, type MachineResult, armMetrics, loadBenchmarkContract, machineSummary } from './lib.ts';
+import { type ArmResult, type MachineResult, type StressResult, armMetrics, loadBenchmarkContract, machineSummary, stressMetrics } from './lib.ts';
 
 const root = resolve(new URL('../../', import.meta.url).pathname);
 const args = process.argv.slice(2);
@@ -76,6 +83,37 @@ async function load(dir: string): Promise<Library> {
   return { createClient: entry.createClient, bookableStays: entry.bookableStays, impitTransport: transport.impitTransport };
 }
 
+const stressEnabled = !args.includes('--no-stress');
+
+/**
+ * Searches the stress area for `listings` ids, then fetches all their reviews
+ * through one client, at whatever pace it chooses. A fresh client, so the
+ * pace starts from the implementation's initial rate.
+ */
+async function stress(lib: Library, side: string): Promise<{ events: TraceEvent[]; result: StressResult }> {
+  const { area: areaId, nightlyPrice, listings, reviewsLimit } = contract.stress;
+  const area = loadContract().areas.find((a) => a.id === areaId);
+  if (!area) throw new Error(`contract/benchmark.json names an unknown area: ${areaId}`);
+  const events: TraceEvent[] = [];
+  const client = lib.createClient({ trace: (e) => events.push(e) });
+  const started = Date.now();
+  const ids: string[] = [];
+  for await (const hit of client.search([{ area: { bbox: area.bbox }, nightlyPrice }]).items()) {
+    ids.push(hit.listing.id);
+    if (ids.length >= listings) break;
+  }
+  const { items, outcome } = await client.reviews(ids, { limit: reviewsLimit }).all();
+  const ms = Date.now() - started;
+  const error: ErrorCategory | null = outcome.error?.category ?? null;
+  const result = stressMetrics(events, { ms, items: items.length, ok: items.filter((r) => r.ok).length, error });
+  console.log(
+    `[${side}] stress: ${result.requests} requests in ${(ms / 1000).toFixed(1)} s (${result.requestsPerSecond.toFixed(1)}/s), ` +
+      `${result.rateLimits} rate limits, ${result.refusals} refused, fastest pace ${result.fastestPace?.toFixed(1) ?? '–'}/s, ` +
+      `${result.ok} of ${result.items} reviews, ${error ?? 'finished'}`,
+  );
+  return { events, result };
+}
+
 async function measure(side: 'candidate' | 'base', source: string): Promise<ArmResult> {
   const { dir, commit } = checkout(source);
   const lib = await load(dir);
@@ -89,11 +127,17 @@ async function measure(side: 'candidate' | 'base', source: string): Promise<ArmR
     trace: (e) => events.push(e),
     print: (line) => console.log(`[${side}] ${line}`),
   });
+  let stressResult: StressResult | null = null;
+  if (stressEnabled) {
+    const { events: stressEvents, result } = await stress(lib, side);
+    stressResult = result;
+    writeFileSync(join(outDir, `${side}.stress.trace.ndjson`), stressEvents.map((e) => JSON.stringify(e)).join('\n') + '\n');
+  }
   const wallMs = Date.now() - started;
   writeFileSync(join(outDir, `${side}.trace.ndjson`), events.map((e) => JSON.stringify(e)).join('\n') + '\n');
   writeFileSync(join(outDir, `${side}.log.txt`), `${log.join('\n')}\n`);
   writeFileSync(join(outDir, `${side}.report.json`), `${JSON.stringify(report, null, 2)}\n`);
-  return armMetrics(events, report, { source, commit, wallMs });
+  return armMetrics(events, report, { source, commit, wallMs }, stressResult);
 }
 
 try {

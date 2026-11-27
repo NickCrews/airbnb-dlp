@@ -89,7 +89,8 @@ describe('Batch', () => {
   it('pauses new requests while the buffer is unread', async () => {
     const t = fakeTransport(() => ok(LISTING_JSON));
     const ids = Array.from({ length: 100 }, (_, i) => String(i));
-    const batch = testClient(t).listings(ids);
+    // Few in flight, so the requests the buffer holds back are what the count shows.
+    const batch = testClient(t, { limits: { concurrency: 4 } }).listings(ids);
     const iterator = batch.items()[Symbol.asyncIterator]();
     await iterator.next();
     await new Promise((r) => setTimeout(r, 50));

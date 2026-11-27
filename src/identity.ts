@@ -24,10 +24,11 @@ export const JSON_HEADERS: Readonly<Record<string, string>> = {
  * The pace. A client starts at INITIAL_REQUESTS_PER_SECOND and adapts from
  * Airbnb's responses (src/scheduler.ts): faster while requests are served
  * normally, half as fast on a rate limit. DEFAULT_REQUESTS_PER_SECOND and
- * DEFAULT_CONCURRENCY are ceilings on how hard one client pushes, not
- * estimates of Airbnb's limit; callers can only lower them. The live check and
- * the benchmark run at these defaults.
+ * DEFAULT_CONCURRENCY are ceilings set well above what Airbnb sustains, so
+ * the adaptive pace, not these numbers, decides how fast a client goes; the
+ * benchmark's stress stage shows where it settles. Callers can only lower
+ * them. The live check and the benchmark run at these defaults.
  */
 export const INITIAL_REQUESTS_PER_SECOND = 2;
-export const DEFAULT_REQUESTS_PER_SECOND = 20;
-export const DEFAULT_CONCURRENCY = 8;
+export const DEFAULT_REQUESTS_PER_SECOND = 100;
+export const DEFAULT_CONCURRENCY = 32;

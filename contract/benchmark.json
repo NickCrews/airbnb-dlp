@@ -1,6 +1,15 @@
 {
-  "comment": "The benchmark runs the live check (scripts/live-check/check.ts) on each implementation it compares and measures it from the client's trace. An implementation completes when its live check passes. The bar: complete on every runner, no more refusals than the base, and at least minSpeedRatio of the base's speed. Measured settings, not guesses about Airbnb's limit.",
+  "comment": "The benchmark runs the live check (scripts/live-check/check.ts) on each implementation it compares, then a stress stage that pushes as fast as the implementation's pace allows until Airbnb rate-limits it, and measures both from the client's trace. An implementation completes when its live check passes and its stress stage does not end Blocked; rate limits it waits out are expected. The bar: complete on every runner, no more hard refusals (403, 428, challenge) than the base, and at least minSpeedRatio of the base's speed. Measured settings, not guesses about Airbnb's limit.",
   "small": true,
   "runners": 5,
-  "minSpeedRatio": 0.9
+  "minSpeedRatio": 0.9,
+  "stress": {
+    "area": "austin-tx",
+    "nightlyPrice": {
+      "min": 50,
+      "max": 1000
+    },
+    "listings": 300,
+    "reviewsLimit": 6
+  }
 }
