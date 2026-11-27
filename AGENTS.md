@@ -68,10 +68,11 @@ If your run passes and the recordings show nothing the code could fix, comment o
 
 1. Fix the code.
 2. If Airbnb changed what it sends or accepts for a product (a new response shape, request or operation), re-record that product's fixtures with `pnpm record <product>` in the same pull request. If the code misread responses that have not changed, leave the fixtures alone: the existing fixtures passing is the proof of the fix. Never re-record only to refresh the data.
-3. Run `pnpm test`, `pnpm typecheck`, `pnpm lint` and `pnpm live-check --small`.
-4. Open one pull request whose description says: what broke, what changed upstream (or that nothing did), which fixtures were re-recorded and why, and before/after fill rates from a live run. Its body includes `Closes #<issue>`.
+3. Run `pnpm test`, `pnpm typecheck`, `pnpm lint` and `pnpm benchmark --base main`, which runs the live check on your tree and on main. A fix has to work and stay fast: one that passes by running much slower is not a repair.
+4. Before opening the pull request, push your branch and benchmark it on the runners: `gh workflow run benchmark.yml --ref main -f candidate=<your branch>`, then `gh run watch` and `gh run download <run id> -n benchmark-merged`. If it fails the bar, find a faster fix.
+5. Open one pull request whose description says: what broke, what changed upstream (or that nothing did), which fixtures were re-recorded and why, and the benchmark's result: speed ratio, refusals and a link to the run. Its body includes `Closes #<issue>`.
 
-The pull request merges when the required checks pass.
+The pull request merges when the required checks pass. One of them, `benchmark`, runs the same five-runner benchmark of your pull request against its base: its live check passes on every runner, it is refused no more often than the base, and it runs at least 0.9 times as fast. When the base itself is broken, as in a drill, it is compared with the weekly benchmark of main instead.
 
 ### 3. Hand over
 

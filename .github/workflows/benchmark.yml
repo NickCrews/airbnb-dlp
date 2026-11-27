@@ -9,6 +9,11 @@
 # come from the ref it is dispatched on, and only the library under test comes
 # from `candidate` and `base`. The weekly run benchmarks main alone, as the
 # reference for a candidate whose base fails its own live check.
+#
+# On a pull request by the repair agent that changes src/, it benchmarks the
+# head against the pull request's base, and its last job, `benchmark`, is a
+# required check: a repair that works but runs much slower does not merge. On
+# any other pull request that job is skipped, which counts as passing.
 name: Benchmark
 on:
   workflow_dispatch:
@@ -27,32 +32,54 @@ on:
         default: '5'
   schedule:
     - cron: '43 6 * * 1'
+  pull_request:
 permissions:
   contents: read
+# One group per pull request, so a newer push replaces a waiting benchmark of
+# the same pull request; dispatched and scheduled runs each get their own.
 concurrency:
-  group: benchmark
-  cancel-in-progress: false
+  group: benchmark-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  CANDIDATE: ${{ inputs.candidate || 'main' }}
-  BASE: ${{ github.event_name == 'schedule' && '' || inputs.base }}
+  CANDIDATE: ${{ github.event.pull_request.head.sha || inputs.candidate || 'main' }}
+  BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'schedule' && '' || inputs.base }}
 
 jobs:
   plan:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
+      active: ${{ steps.plan.outputs.active }}
       runners: ${{ steps.plan.outputs.runners }}
     steps:
       - id: plan
         env:
+          GH_TOKEN: ${{ github.token }}
           RUNNERS: ${{ inputs.runners || '5' }}
+          EVENT: ${{ github.event_name }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          AGENT: ${{ vars.AGENT_BOT_LOGIN }}
+          PR: ${{ github.event.pull_request.number }}
         run: |
           case "$RUNNERS" in [1-5]) ;; *) echo "::error::runners must be 1 to 5"; exit 1 ;; esac
           echo "runners=$(jq -cn --argjson n "$RUNNERS" '[range(1; $n + 1)]')" >> "$GITHUB_OUTPUT"
+          active=true
+          if [ "$EVENT" = pull_request ]; then
+            if [ -z "$AGENT" ] || [ "$AUTHOR" != "$AGENT" ]; then
+              active=false; echo "not a repair-agent pull request"
+            elif ! gh pr diff "$PR" --repo "${{ github.repository }}" --name-only | grep -q '^src/'; then
+              active=false; echo "the pull request changes nothing in src/"
+            fi
+          fi
+          echo "active=$active" >> "$GITHUB_OUTPUT"
 
   run:
     name: runner ${{ matrix.runner }}
     needs: plan
+    if: needs.plan.outputs.active == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     # No secrets and a read-only token: the candidate's code runs here.
@@ -102,9 +129,10 @@ jobs:
           if-no-files-found: ignore
 
   merge:
-    name: merge and judge
-    needs: run
-    if: always() && needs.run.result != 'skipped'
+    # The required check's name.
+    name: benchmark
+    needs: [plan, run]
+    if: always() && needs.plan.outputs.active == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read

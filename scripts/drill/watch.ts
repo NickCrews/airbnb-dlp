@@ -18,6 +18,7 @@ export const REQUIRED_CHECKS = [
   'fixtures (browser)',
   'path-allowlist',
   'live-check (node)',
+  'benchmark',
 ];
 
 const args = process.argv.slice(2);
