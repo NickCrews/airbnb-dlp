@@ -33,7 +33,7 @@ Iterate locally; benchmark on the runners once a change looks right. One run on 
 
 ## How the code is laid out
 
-- `src/products/` has one module per data product: search, listing page, calendar, price quote, reviews. Each hides how it gets its data.
+- `src/products/` has one module per data product: search, listing, calendar, price quote, reviews. Each hides how it gets its data.
 - `src/airbnb.ts` builds requests: the API key, persisted-query hashes (`OPERATIONS`) and the GraphQL request shape.
 - `src/call.ts` runs a bulk call: budget, retries, buffering and the Batch object.
 - `src/classify.ts` sorts failures into categories. `src/identity.ts` holds headers and the default request rate. `src/transport/` holds the TLS fingerprint.
