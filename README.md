@@ -62,8 +62,8 @@ See [AGENTS.md](AGENTS.md) for the repair workflow and what each part of the rep
 The repair loop needs these repository settings:
 
 - **Live-check GitHub App** with Issues, Pull requests and Contents (read and write) permissions and no Workflows permission, installed on this repository. Drills use it to push `drill/*` branches and merge repairs into them, so the ruleset must not cover `drill/*`. Variables `LIVE_CHECK_APP_ID` and `LIVE_CHECK_BOT_LOGIN` (its `<slug>[bot]` login); secret `LIVE_CHECK_APP_PRIVATE_KEY`.
-- **Agent**: the Claude GitHub App installed, secret `AGENT_ANTHROPIC_API_KEY` (a key with its own monthly spend limit), variable `AGENT_BOT_LOGIN` (the login its pull requests are opened by), optional `AGENT_MAX_RUNS_PER_MONTH` (default 20).
-- **Ruleset on `main`**: require a pull request, code-owner review, and the status checks `checks`, `fixtures (node)`, `fixtures (bun)`, `fixtures (deno)`, `fixtures (browser)`, `path-allowlist` and `live-check (node)`, each pinned to GitHub Actions; no bypass list. Allow auto-merge.
+- **Agent**: the Claude GitHub App installed, secret `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`, so runs draw on the maintainer's Claude subscription), variable `AGENT_BOT_LOGIN` (the login its pull requests are opened by), optional `AGENT_MAX_RUNS_PER_MONTH` (default 20).
+- **Ruleset on `main`**: require a pull request, code-owner review, and the status checks `checks`, `fixtures (node)`, `fixtures (bun)`, `fixtures (deno)`, `fixtures (browser)`, `path-allowlist` and `live-check (node)`, each pinned to GitHub Actions. The only bypass is repository admins in pull-request mode, so the maintainer can merge their own pull requests to code-owned paths but nobody can push to `main` directly. Allow auto-merge.
 - **npm**: secret `NPM_TOKEN` for releases.
 - Labels: `live-check`, `agent-repair`, `needs-maintainer`, and `category:<name>` for each failure category (created on first use).
 
