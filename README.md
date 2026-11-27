@@ -12,19 +12,11 @@ Unofficial; not affiliated with Airbnb, Inc.
 
 ## Install
 
-airbnb-dlp is not on npm yet. Build a package from a clone and install that:
-
 ```bash
-git clone https://github.com/NickCrews/airbnb-dlp.git
+npm install airbnb-dlp
 ```
 
-```bash
-cd airbnb-dlp && pnpm install && pnpm pack
-```
-
-```bash
-npm install /path/to/airbnb-dlp/airbnb-dlp-0.1.0.tgz
-```
+Every repair of an airbnb.com change is released as a new patch version once its package has passed the live check, and earlier versions are deprecated. Depend on `^1` and keep your lockfile current (Renovate or Dependabot can merge patch updates automatically) to get repairs. See [docs/release.md](docs/release.md) for how versions are chosen.
 
 Live fetching needs Node 22+, Bun or Deno. See [Runtimes](#runtimes) for browsers and edge runtimes.
 
