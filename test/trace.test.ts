@@ -85,6 +85,24 @@ describe('rate limits', () => {
     expect(t.requests).toHaveLength(2);
   });
 
+  it("treats the API's 401 as its throttle: waits it out from 10 s, then retries", async () => {
+    const events: TraceEvent[] = [];
+    let n = 0;
+    const t = fakeTransport(() => (n++ < 2 ? { status: 401, headers: {}, body: '{"error":"unauthorized"}' } : ok(LISTING_JSON)));
+    const { items, outcome } = await testClient(t, { trace: (e) => events.push(e) }).listings(['1']).all();
+    expect(items[0]!.ok).toBe(true);
+    expect(outcome.error).toBeNull();
+    expect(events.filter((e) => e.type === 'pace' && e.reason === 'rate-limited').map((e) => e.type === 'pace' && e.pauseMs)).toEqual([10_000, 20_000]);
+  });
+
+  it('ends the call as Blocked when the API keeps answering 401', async () => {
+    const t = fakeTransport(() => ({ status: 401, headers: {}, body: '{"error":"unauthorized"}' }));
+    const { outcome } = await testClient(t, { limits: { concurrency: 1 } }).listings(['1', '2']).all();
+    expect(outcome.error?.category).toBe('Blocked');
+    // The homepage, then the listing request and its three retries.
+    expect(t.requests).toHaveLength(5);
+  });
+
   it('ends the call at once on a challenge page, whatever its status', async () => {
     const t = fakeTransport(() => ({ status: 429, headers: {}, body: '<script src="/_sec/cp_challenge/x.js"></script>' }));
     const { outcome } = await testClient(t).listings(['1']).all();

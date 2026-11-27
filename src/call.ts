@@ -33,14 +33,32 @@ export interface ClientContext {
 export const REQUEST_TIMEOUT_MS = 30_000;
 export const MAX_RETRIES = 3;
 export const RETRY_BASE_MS = 2_000;
-/** Rate limits (a plain 429) one request waits out, slowing the whole client each time, before the call ends as Blocked. */
+/** Rate limits one request waits out, slowing the whole client each time, before the call ends as Blocked. */
 export const MAX_RATE_LIMIT_RETRIES = 3;
 /** The longest Retry-After the client waits out; a longer one ends the call as Blocked. */
 export const MAX_RATE_LIMIT_PAUSE_MS = 60_000;
+/**
+ * The first pause for Airbnb's API throttle, which answers 401 rather than
+ * 429 and lasts tens of seconds: a fresh client still got it 30 s after a
+ * burst of about 70 requests a second.
+ */
+export const API_THROTTLE_PAUSE_MS = 10_000;
 
 /**
- * How long a 429 asks the client to wait: its Retry-After, in seconds or as
- * a date, or a backoff that doubles with each limit on the same request.
+ * Whether a response says "too fast": a plain 429, or a 401 from the GraphQL
+ * API, which is how Airbnb's API throttles. A challenge page, a 403 or a 428 is
+ * a block instead.
+ */
+export function isRateLimit(request: TransportRequest, response: TransportResponse): boolean {
+  if (isChallenge(response)) return false;
+  if (response.status === 429) return true;
+  return response.status === 401 && new URL(request.url).pathname.startsWith('/api/v3/');
+}
+
+/**
+ * How long a rate limit asks the client to wait: its Retry-After, in seconds
+ * or as a date, or a backoff that doubles with each limit on the same request,
+ * from a longer start for the API's 401 throttle.
  */
 export function rateLimitPause(response: TransportResponse, limitsSoFar: number, now: number): number {
   const value = header(response.headers, 'retry-after');
@@ -50,7 +68,7 @@ export function rateLimitPause(response: TransportResponse, limitsSoFar: number,
     const date = Date.parse(value);
     if (Number.isFinite(date)) return Math.max(0, date - now);
   }
-  return RETRY_BASE_MS * 2 ** limitsSoFar;
+  return (response.status === 401 ? API_THROTTLE_PAUSE_MS : RETRY_BASE_MS) * 2 ** limitsSoFar;
 }
 /** Items a batch holds unread before it pauses new requests. */
 export const BUFFER_SIZE = 16;
@@ -210,9 +228,10 @@ export class Call {
         this.ctx.scheduler.succeeded();
         return { response, exchange };
       }
-      // A plain 429 says "too fast": slow the whole client, wait, and try again.
+      // A rate limit says "too fast": slow the whole client, wait, and try again.
       // A challenge page, a 403 or a 428 is a block, and ends the call at once.
-      if (response.status === 429 && !isChallenge(response) && rateLimits < MAX_RATE_LIMIT_RETRIES) {
+      const limited = isRateLimit(request, response);
+      if (limited && rateLimits < MAX_RATE_LIMIT_RETRIES) {
         const pauseMs = rateLimitPause(response, rateLimits, clock.now());
         if (pauseMs <= MAX_RATE_LIMIT_PAUSE_MS) {
           rateLimits++;
@@ -222,7 +241,8 @@ export class Call {
           continue;
         }
       }
-      if (category === 'Blocked') {
+      // A rate limit that outlasts every wait is a block too.
+      if (category === 'Blocked' || limited) {
         const error = new BlockedError(`blocked: HTTP ${response.status} from ${request.url}`, { exchange });
         this.stop(error);
         throw error;

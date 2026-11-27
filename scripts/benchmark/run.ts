@@ -33,7 +33,7 @@ import type { ErrorCategory } from '../../src/errors.ts';
 import type { TraceEvent } from '../../src/types.ts';
 import { loadContract } from '../live-check/contract.ts';
 import { type Library, liveCheck } from '../live-check/check.ts';
-import { type ArmResult, type MachineResult, type StressResult, armMetrics, loadBenchmarkContract, machineSummary, stressMetrics } from './lib.ts';
+import { type MachineResult, type StressResult, armMetrics, loadBenchmarkContract, machineSummary, stressMetrics } from './lib.ts';
 
 const root = resolve(new URL('../../', import.meta.url).pathname);
 const args = process.argv.slice(2);
@@ -114,7 +114,18 @@ async function stress(lib: Library, side: string): Promise<{ events: TraceEvent[
   return { events, result };
 }
 
-async function measure(side: 'candidate' | 'base', source: string): Promise<ArmResult> {
+interface LiveRun {
+  side: 'candidate' | 'base';
+  source: string;
+  commit: string | null;
+  lib: Library;
+  events: TraceEvent[];
+  report: Awaited<ReturnType<typeof liveCheck>>['report'];
+  wallMs: number;
+}
+
+/** One side's live check: correctness, and the time the speed ratio compares. */
+async function live(side: 'candidate' | 'base', source: string): Promise<LiveRun> {
   const { dir, commit } = checkout(source);
   const lib = await load(dir);
   const events: TraceEvent[] = [];
@@ -127,36 +138,50 @@ async function measure(side: 'candidate' | 'base', source: string): Promise<ArmR
     trace: (e) => events.push(e),
     print: (line) => console.log(`[${side}] ${line}`),
   });
-  let stressResult: StressResult | null = null;
-  if (stressEnabled) {
-    const { events: stressEvents, result } = await stress(lib, side);
-    stressResult = result;
-    writeFileSync(join(outDir, `${side}.stress.trace.ndjson`), stressEvents.map((e) => JSON.stringify(e)).join('\n') + '\n');
-  }
   const wallMs = Date.now() - started;
   writeFileSync(join(outDir, `${side}.trace.ndjson`), events.map((e) => JSON.stringify(e)).join('\n') + '\n');
   writeFileSync(join(outDir, `${side}.log.txt`), `${log.join('\n')}\n`);
   writeFileSync(join(outDir, `${side}.report.json`), `${JSON.stringify(report, null, 2)}\n`);
-  return armMetrics(events, report, { source, commit, wallMs }, stressResult);
+  return { side, source, commit, lib, events, report, wallMs };
 }
+
+/**
+ * Airbnb's API throttle outlasts a burst by tens of seconds, so the stress
+ * stages come after both live checks, and the second waits this long after
+ * the first: neither the live checks nor the second stress stage start inside
+ * the other side's throttle.
+ */
+const STRESS_GAP_MS = 60_000;
 
 try {
   mkdirSync(outDir, { recursive: true });
   const candidateSource = flag('--candidate') ?? '.';
   const baseSource = flag('--base');
   const sides: ('candidate' | 'base')[] = baseSource ? (order === 'base-first' ? ['base', 'candidate'] : ['candidate', 'base']) : ['candidate'];
-  const results: Partial<Record<'candidate' | 'base', ArmResult>> = {};
+  const runs: LiveRun[] = [];
   for (const [i, side] of sides.entries()) {
     if (i > 0) await new Promise((r) => setTimeout(r, PAUSE_MS));
-    results[side] = await measure(side, side === 'candidate' ? candidateSource : baseSource!);
+    runs.push(await live(side, side === 'candidate' ? candidateSource : baseSource!));
   }
-  const candidate = results.candidate!;
-  const base = results.base ?? null;
+  const stressBySide = new Map<'candidate' | 'base', StressResult>();
+  if (stressEnabled) {
+    for (const [i, run] of runs.entries()) {
+      if (i > 0) await new Promise((r) => setTimeout(r, STRESS_GAP_MS));
+      const { events, result } = await stress(run.lib, run.side);
+      stressBySide.set(run.side, result);
+      writeFileSync(join(outDir, `${run.side}.stress.trace.ndjson`), events.map((e) => JSON.stringify(e)).join('\n') + '\n');
+    }
+  }
+  const arm = (run: LiveRun | undefined) =>
+    run ? armMetrics(run.events, run.report, { source: run.source, commit: run.commit, wallMs: run.wallMs }, stressBySide.get(run.side) ?? null) : null;
+  const candidate = arm(runs.find((r) => r.side === 'candidate'))!;
+  const base = arm(runs.find((r) => r.side === 'base'));
   const machine: MachineResult = {
     version: 1,
     label,
     candidate,
     base,
+    // The live checks' times: both ran before either stress stage.
     speedRatio: base && base.completed && candidate.completed ? base.wallMs / candidate.wallMs : null,
   };
   writeFileSync(join(outDir, 'benchmark.json'), `${JSON.stringify(machine, null, 2)}\n`);

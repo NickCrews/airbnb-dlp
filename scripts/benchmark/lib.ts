@@ -39,6 +39,7 @@ export interface ArmResult {
   source: string;
   commit: string | null;
   startedAt: string;
+  /** The live check's wall time, which the speed ratio compares; the stress stage is timed in `stress`. */
   wallMs: number;
   requests: number;
   bytes: number;
