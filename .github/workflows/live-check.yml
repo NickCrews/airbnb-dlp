@@ -3,6 +3,14 @@ on:
   schedule:
     - cron: '17 */4 * * *'
   workflow_dispatch:
+    inputs:
+      file_from_run:
+        description: >-
+          Files an issue from an earlier live-check run instead of running the
+          live check, e.g. a pull request's run that failed for a reason its
+          change did not cause (AGENTS.md)
+        type: string
+        default: ''
   # Every pull request runs it, because `live-check (node)` is a required check on main.
   pull_request:
 permissions:
@@ -15,6 +23,9 @@ concurrency:
 jobs:
   run:
     name: live-check (${{ matrix.runtime }})
+    # Filing from an earlier run sends nothing to airbnb.com, which may have
+    # just answered with a 429.
+    if: inputs.file_from_run == ''
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -77,14 +88,28 @@ jobs:
   file-issues:
     name: file issues
     needs: run
-    if: always() && github.event_name == 'schedule' && needs.run.result == 'failure'
+    if: >-
+      always() &&
+      ((github.event_name == 'schedule' && needs.run.result == 'failure') || inputs.file_from_run != '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with: { node-version: 22, package-manager-cache: false }
-      - uses: actions/download-artifact@v5
+      - if: inputs.file_from_run == ''
+        uses: actions/download-artifact@v5
         with: { pattern: live-check-report-*, path: .live-check/now }
+      - name: Download the earlier run's reports
+        if: inputs.file_from_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.file_from_run }}
+        run: |
+          case "$SOURCE_RUN" in *[!0-9]*) echo "::error::file_from_run must be a run id"; exit 1 ;; esac
+          workflow=$(gh run view "$SOURCE_RUN" --json workflowName --jq .workflowName)
+          if [ "$workflow" != "Live check" ]; then echo "::error::run $SOURCE_RUN is a $workflow run, not a live check"; exit 1; fi
+          gh run download "$SOURCE_RUN" --pattern 'live-check-report-*' --dir .live-check/now
+          ls -R .live-check/now
       # Issues opened with the default GITHUB_TOKEN start no workflow, so the
       # live-check GitHub App files them.
       - uses: actions/create-github-app-token@v2
@@ -95,6 +120,7 @@ jobs:
       - name: File
         env:
           GITHUB_TOKEN: ${{ steps.app.outputs.token }}
+          LIVE_CHECK_RUN_ID: ${{ inputs.file_from_run || github.run_id }}
         run: |
           for report in .live-check/now/*/report.json; do
             node scripts/live-check/file-issues.ts "$report"
