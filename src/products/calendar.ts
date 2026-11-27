@@ -32,7 +32,7 @@ export function parseCalendar(id: ListingId, json: unknown, from: string): Calen
   for (const month of months) {
     for (const raw of asArray(asRecord(month)['days'])) {
       const day = asRecord(raw);
-      const date = day['calendarDay'];
+      const date = day['calendarDate'];
       if (typeof date !== 'string') throw new ShapeError('calendar day has no calendarDate');
       if (date < from || seen.has(date)) continue;
       seen.add(date);
