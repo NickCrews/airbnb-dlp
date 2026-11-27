@@ -39,11 +39,11 @@ Search has no room-type filter: Airbnb's own filter ignores some room types, and
 
 Every method is bulk and returns a `Batch`, modelled on fetch's `Response`. `items()` streams results as they finish, and `outcome()` resolves with what ended the call early, which inputs are incomplete, and how many requests were made. It never rejects. One listing failing yields a typed error for that item and the rest continue. A `Blocked` failure ends the call.
 
-One client holds one request budget, shared by all its calls: at most 1 request a second and 4 in flight by default. A caller can lower these, set `maxRequests` or `maxDurationMs`, or pass an `AbortSignal`, but cannot raise the rate. When Airbnb blocks requests, the library reports `Blocked`. The repair loop may update headers and the TLS fingerprint to match current Chrome, or slow down, but never uses proxies, rotates IP addresses or solves challenges.
+One client holds one request budget, shared by all its calls: at most 1 request a second and 4 in flight by default. A caller can lower these, set `maxRequests` or `maxDurationMs`, or pass an `AbortSignal`, but cannot raise the rate. The defaults stay within what Airbnb allows; the repair loop may move them up or down to that limit. When Airbnb blocks requests, the library reports `Blocked`. The repair loop may update headers and the TLS fingerprint to match a current browser, but never uses proxies, rotates IP addresses or solves challenges.
 
 ## Runtimes
 
-Parsing works on Node, Bun, Deno and in browsers. Live fetching works on Node 22+, Bun and Deno (`deno run -A`), through [impit](https://github.com/apify/impit), which sends Chrome's TLS fingerprint. Browsers, workers and edge runtimes get a build with no default transport, so `createClient` there needs a `transport`.
+Parsing works on Node, Bun, Deno and in browsers. Live fetching works on Node 22+, Bun and Deno (`deno run -A`), through [impit](https://github.com/apify/impit), which sends a current browser's TLS fingerprint (Chrome's by default). Browsers, workers and edge runtimes get a build with no default transport, so `createClient` there needs a `transport`.
 
 Transport, clock and random source are injectable. The `airbnb-dlp/testing` subpath has `recordingTransport`, `replayTransport` and `manualClock` for your own tests.
 
@@ -65,7 +65,7 @@ The repair loop needs these repository settings:
 - **Agent**: the Claude GitHub App installed, secret `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`, so runs draw on the maintainer's Claude subscription), variable `AGENT_BOT_LOGIN` (the login its pull requests are opened by), optional `AGENT_MAX_RUNS_PER_MONTH` (default 20).
 - **Ruleset on `main`**: require a pull request, code-owner review, and the status checks `checks`, `fixtures (node)`, `fixtures (bun)`, `fixtures (deno)`, `fixtures (browser)`, `path-allowlist` and `live-check (node)`, each pinned to GitHub Actions. The only bypass is repository admins in pull-request mode, so the maintainer can merge their own pull requests to code-owned paths but nobody can push to `main` directly. Allow auto-merge.
 - **npm**: secret `NPM_TOKEN` for releases.
-- Labels: `live-check`, `agent-repair`, `needs-maintainer`, `drill`, and `category:<name>` for each failure category (created on first use). Every live-check issue gets `agent-repair`; the agent adds `needs-maintainer` when it cannot fix one.
+- Labels: `live-check`, `agent-repair`, `needs-maintainer` and `drill`. A failing live check opens one issue with `agent-repair`, and later failing runs comment on it only when the failing checks change; the agent adds `needs-maintainer` when it cannot fix it.
 
 ## Drills
 

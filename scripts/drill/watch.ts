@@ -1,7 +1,7 @@
 /**
  * Follows a drill's issue through the repair loop and merges the repair when
  * it passes the same checks the ruleset requires on main:
- * `node scripts/drill/watch.ts --scenario <name> --issues <n,...> --branch <drill/...>`.
+ * `node scripts/drill/watch.ts --scenario <name> --issues <n> --branch <drill/...>`.
  *
  * Env: GITHUB_TOKEN (the live-check App's token, which may merge),
  * GITHUB_REPOSITORY, AGENT_BOT_LOGIN. Writes a step table to
@@ -70,12 +70,9 @@ function heartbeat(message: string): void {
 }
 const labelsOf = (issue: any): string[] => issue.labels.map((l: any) => (typeof l === 'string' ? l : l.name));
 
-async function issueFor(category: string): Promise<any | null> {
-  for (const n of issues) {
-    const issue = await github(`/issues/${n}`);
-    if (labelsOf(issue).includes(`category:${category}`)) return issue;
-  }
-  return null;
+/** The drill's issue: the filer opens one per drill. */
+async function drillIssue(): Promise<any | null> {
+  return issues[0] === undefined ? null : github(`/issues/${issues[0]}`);
 }
 
 async function repairPull(issue: number): Promise<any | null> {
@@ -103,8 +100,8 @@ async function checksVerdict(pull: any): Promise<{ ok: boolean; detail: string }
 }
 
 async function drillAgentPath(): Promise<boolean> {
-  const issue = await issueFor(scenario.expect);
-  if (!record('issue filed', issue !== null, issue ? `#${issue.number} with category ${scenario.expect}` : `no issue with category ${scenario.expect} among #${issues.join(', #')}`)) return false;
+  const issue = await drillIssue();
+  if (!record('issue filed', issue !== null, issue ? `#${issue.number}` : 'the filer opened no issue')) return false;
   if (!record('routed to the agent', labelsOf(issue).includes('agent-repair'), labelsOf(issue).join(', '))) return false;
   console.log(`waiting up to ${PR_TIMEOUT_MS / 60_000} min for a pull request by ${agentLogin || '(AGENT_BOT_LOGIN unset)'} into ${branch} that closes #${issue.number}`);
 
@@ -132,8 +129,8 @@ async function drillAgentPath(): Promise<boolean> {
 
 /** The agent triages the issue and answers on it, closing it or handing it to the maintainer, without a pull request. */
 async function drillNoRepairPath(): Promise<boolean> {
-  const issue = await issueFor(scenario.expect);
-  if (!record('issue filed', issue !== null, issue ? `#${issue.number} with category ${scenario.expect}` : `no issue with category ${scenario.expect}`)) return false;
+  const issue = await drillIssue();
+  if (!record('issue filed', issue !== null, issue ? `#${issue.number}` : 'the filer opened no issue')) return false;
   if (!record('routed to the agent', labelsOf(issue).includes('agent-repair'), labelsOf(issue).join(', '))) return false;
   console.log(`waiting up to ${PR_TIMEOUT_MS / 60_000} min for the agent to close #${issue.number} or add needs-maintainer`);
   let answered: any = null;

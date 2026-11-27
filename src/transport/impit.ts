@@ -1,6 +1,7 @@
 /**
- * The default transport on Node, Bun and Deno. impit sends Chrome's TLS
- * fingerprint; Airbnb sits behind Akamai, which refuses Node's own fetch.
+ * The default transport on Node, Bun and Deno. impit sends a current browser's
+ * TLS fingerprint, Chrome's here; Airbnb sits behind Akamai, which refuses
+ * Node's own fetch.
  * Loaded lazily so importing the library costs nothing until a request is made.
  */
 import type { Transport } from '../types.ts';
