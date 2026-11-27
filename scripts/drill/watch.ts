@@ -127,12 +127,12 @@ async function drillAgentPath(): Promise<boolean> {
   return record('merged into the drill branch', !(merged instanceof Error), merged instanceof Error ? merged.message : `#${pull.number}`);
 }
 
-/** The agent triages the issue and answers on it, closing it or handing it to the maintainer, without a pull request. */
-async function drillNoRepairPath(): Promise<boolean> {
+/** The agent triages the issue and hands it to the maintainer, without a pull request and without closing it. */
+async function drillHandOverPath(): Promise<boolean> {
   const issue = await drillIssue();
   if (!record('issue filed', issue !== null, issue ? `#${issue.number}` : 'the filer opened no issue')) return false;
   if (!record('routed to the agent', labelsOf(issue).includes('agent-repair'), labelsOf(issue).join(', '))) return false;
-  console.log(`waiting up to ${PR_TIMEOUT_MS / 60_000} min for the agent to close #${issue.number} or add needs-maintainer`);
+  console.log(`waiting up to ${PR_TIMEOUT_MS / 60_000} min for the agent to add needs-maintainer to #${issue.number}`);
   let answered: any = null;
   for (const deadline = Date.now() + PR_TIMEOUT_MS; Date.now() < deadline; await sleep(POLL_MS)) {
     const now = await github(`/issues/${issue.number}`);
@@ -142,13 +142,13 @@ async function drillNoRepairPath(): Promise<boolean> {
     }
     heartbeat(`issue #${issue.number} is ${now.state} with labels ${labelsOf(now).join(', ')} and ${now.comments} comments`);
   }
-  const how = answered ? (answered.state === 'closed' ? 'closed the issue' : 'handed it to the maintainer') : '';
-  if (!record('agent answered on the issue', answered !== null, answered ? `${how} after ${answered.comments} comments` : `no answer within ${PR_TIMEOUT_MS / 60_000} min`)) return false;
+  if (!record('agent answered on the issue', answered !== null, answered ? `after ${answered.comments} comments` : `no answer within ${PR_TIMEOUT_MS / 60_000} min`)) return false;
+  if (!record('handed to the maintainer, not closed', answered.state === 'open' && labelsOf(answered).includes('needs-maintainer'), `issue is ${answered.state} with labels ${labelsOf(answered).join(', ')}`)) return false;
   const pull = await repairPull(issue.number);
   return record('no pull request', pull === null, pull ? `pull request #${pull.number} was opened` : 'none opened');
 }
 
-const ok = await (scenario.outcome === 'repair' ? drillAgentPath() : drillNoRepairPath()).catch((e: Error) => record('watch', false, e.message));
+const ok = await (scenario.outcome === 'repair' ? drillAgentPath() : drillHandOverPath()).catch((e: Error) => record('watch', false, e.message));
 const table = ['| Step | Result | Detail | At |', '|---|---|---|---|', ...steps.map((s) => `| ${s.step} | ${s.ok ? 'pass' : 'FAIL'} | ${s.detail} | ${s.at} |`)].join('\n');
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n### Repair\n\n${table}\n`);
 if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `repaired=${ok && scenario.outcome === 'repair'}\n`);

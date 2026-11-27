@@ -37,10 +37,10 @@ Reproduce before changing anything: run `pnpm live-check --small`, or replay the
 
 - **Requests are refused** (a 4xx other than 403, 428 or 429). Usually a rotated persisted-query hash: find the current one in airbnb.com's JS bundles (`name:'<Operation>',type:'query',operationId:'<hash>'`) and update `OPERATIONS` in `src/airbnb.ts`. Airbnb sometimes changes an operation's variables at the same time.
 - **Responses changed**: a response parses wrongly, or a fill-rate or range check fails. Fix the parser in `src/products/`. Parsers find fields by key name and shape rather than fixed paths; keep them that way.
-- **Blocked** (403, 428, 429 or Akamai's challenge page). Find out whether the requests or the volume caused it. Compare what the library sends with what a current browser sends to airbnb.com: headers in `src/identity.ts`, the TLS fingerprint profile in `src/transport/`. If they differ, make them match. If the run went faster than Airbnb allows, lower `DEFAULT_REQUESTS_PER_SECOND` or `DEFAULT_CONCURRENCY`. If the requests already look like a current browser's and stay within Airbnb's limit, the block is Airbnb's decision about this client: hand the issue over (step 3).
+- **Blocked** (403, 428, 429 or Akamai's challenge page). Find out whether the requests or the volume caused it. Compare what the library sends with what a current browser sends to airbnb.com: headers in `src/identity.ts`, the TLS fingerprint profile in `src/transport/`. If they differ, make them match. If the run went faster than Airbnb allows, lower `DEFAULT_REQUESTS_PER_SECOND` or `DEFAULT_CONCURRENCY`. If the requests already look like a current browser's and stay within Airbnb's limit, the block is Airbnb's decision about this client: hand the issue over (step 3). Hand a block over even when your own run is not blocked: blocks depend on the runner's IP address and the time of day, so a run that gets through does not show the block is gone.
 - **Server or network errors** (5xx, timeouts). Check whether it persists. A 5xx on one operation while others succeed is often a malformed request, which is a repair. Failures across every operation that your own run does not reproduce are an outage: close the issue as not reproduced.
 
-If your run passes and the recordings show nothing the code could fix, comment on the issue with what you checked and close it. A failure that comes back opens a new issue.
+Apart from blocks, if your run passes and the recordings show nothing the code could fix, comment on the issue with what you checked and close it. A failure that comes back opens a new issue.
 
 ### 2. Repair
 
@@ -57,7 +57,7 @@ When you cannot fix it, comment on the issue with what you found, what you tried
 
 - the fix needs a path in `contract/protected-paths.json`;
 - the fix needs a new or upgraded dependency, such as a newer impit for a newer browser fingerprint;
-- the block persists with a current browser's requests within Airbnb's limit;
+- the failure is a block you cannot trace to the requests or their pace, whether or not your run reproduces it;
 - you tried and the live check still fails.
 
 ## Limits

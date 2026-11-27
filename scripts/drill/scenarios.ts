@@ -12,10 +12,10 @@ export interface Scenario {
   expect: ErrorCategory;
   /**
    * What the agent, which gets every issue, should do: `repair` opens a pull
-   * request; `no-repair` answers on the issue (closes it, or hands it to the
-   * maintainer) and opens none.
+   * request; `hand-over` comments, adds needs-maintainer, leaves the issue
+   * open and opens no pull request.
    */
-  outcome: 'repair' | 'no-repair';
+  outcome: 'repair' | 'hand-over';
   /** Edits to the code, as exact replacements; none for a scenario simulated at the transport. */
   edits: { file: string; from: string; to: string }[];
   /** Environment for the live check. */
@@ -49,10 +49,11 @@ export const SCENARIOS: Record<string, Scenario> = {
   },
   blocked: {
     // The block is simulated in the drill's live check only, so the agent's own
-    // live run does not reproduce it; nothing in the code needs fixing.
+    // live run does not reproduce it. Nothing in the code needs fixing, and a
+    // block goes to the maintainer even when it does not reproduce.
     description: 'Airbnb rate-limits the runner',
     expect: 'Blocked',
-    outcome: 'no-repair',
+    outcome: 'hand-over',
     edits: [],
     env: { LIVE_CHECK_SIMULATE: 'blocked' },
   },
