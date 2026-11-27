@@ -44,6 +44,7 @@
     "live-check": "node scripts/live-check/run.ts",
     "benchmark": "node scripts/benchmark/run.ts",
     "benchmark:merge": "node scripts/benchmark/merge.ts",
+    "find-operation": "node scripts/find-operation.ts",
     "path-check": "node scripts/path-check.ts"
   },
   "dependencies": {

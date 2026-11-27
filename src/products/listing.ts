@@ -3,13 +3,8 @@
  * listing page itself loads, at a fraction of the page's size. Fields are
  * found by key name and shape anywhere in the response, not by path, so
  * renamed wrappers and moved sections do not break them.
- *
- * parseListingPage reads the same attributes from a listing page's HTML, in
- * up to three independent ways: the embedded GraphQL state, the schema.org
- * JSON-LD block for the coordinate, and patterns over the raw HTML. A pattern
- * yields nothing when it matches more than one distinct value.
  */
-import { ORIGIN, decodeNodeId, graphql, nodeId } from '../airbnb.ts';
+import { decodeNodeId, graphql, nodeId } from '../airbnb.ts';
 import type { Call } from '../call.ts';
 import { AirbnbError } from '../errors.ts';
 import { MarkerMissingError, ShapeError } from '../parse-errors.ts';
@@ -21,57 +16,6 @@ export const ROOM_TYPES: Record<string, RoomType> = {
   'Private room': 'private_room',
   'Shared room': 'shared_room',
   'Hotel room': 'hotel_room',
-};
-
-export function listingPageUrl(id: ListingId, query: Record<string, string> = {}): string {
-  const params = new URLSearchParams({ locale: 'en', ...query });
-  return `${ORIGIN}/rooms/${id}?${params}`;
-}
-
-const SCRIPT_RE = /<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi;
-
-export interface PageDocs {
-  /** Every JSON script that parses, largest first: the GraphQL state is the largest. */
-  json: unknown[];
-  /** schema.org JSON-LD blocks. */
-  jsonLd: unknown[];
-}
-
-export function pageDocs(html: string): PageDocs {
-  const json: { size: number; doc: unknown }[] = [];
-  const jsonLd: unknown[] = [];
-  for (const match of html.matchAll(SCRIPT_RE)) {
-    const attrs = match[1]!;
-    const text = match[2]!;
-    const isLd = /type="application\/ld\+json"/i.test(attrs);
-    if (!isLd && !/type="[^"]*json[^"]*"/i.test(attrs) && !text.trimStart().startsWith('{')) continue;
-    let doc: unknown;
-    try {
-      doc = JSON.parse(text);
-    } catch {
-      continue;
-    }
-    if (isLd) jsonLd.push(doc);
-    else json.push({ size: text.length, doc });
-  }
-  json.sort((x, y) => y.size - x.size);
-  return { json: json.map((j) => j.doc), jsonLd };
-}
-
-/** The one distinct capture of a global pattern in the raw document, or null. */
-function soleMatch(html: string, pattern: RegExp): string | null {
-  const values = new Set<string>();
-  for (const m of html.matchAll(pattern)) values.add(m[1]!);
-  return values.size === 1 ? [...values][0]! : null;
-}
-
-const RAW = {
-  exactLocation: /"\w*[eE]xact[lL]ocation\w*"\s*:\s*(true|false)/g,
-  roomType: /"roomType"\s*:\s*"([^"]+)"/g,
-  personCapacity: /"personCapacity"\s*:\s*(\d+)/g,
-  bedCount: /"bedCount"\s*:\s*(\d+)/g,
-  hostId: /"host_?id"\s*:\s*"?(\d+)/gi,
-  items: /"items"\s*:\s*(\["(?:[^"\\]|\\.)*"(?:\s*,\s*"(?:[^"\\]|\\.)*")*\])/g,
 };
 
 /** True when the page state says the listing does not exist or is hidden. */
@@ -87,30 +31,48 @@ const EXACT_LOCATION_KEY = /exact.*location/i;
 const LAT_KEY = /^lat(itude)?$/i;
 const LNG_KEY = /^(lng|long|longitude)$/i;
 const ADDRESS_KEY = /^exact.*address$/i;
+const SUBTITLE_KEY = /^subtitle$/i;
+const VERIFIED_KEY = /^(is)?verified$/i;
 
 function firstKey<T>(obj: Record<string, unknown>, key: RegExp, accept: (v: unknown) => v is T): T | null {
   for (const [k, v] of Object.entries(obj)) if (key.test(k) && accept(v)) return v;
   return null;
 }
 
-/** The location object: the one with a boolean key like isExactLocation. */
-function findLocation(docs: unknown[]): { lat: number | null; lng: number | null; exact: boolean; address: string | null } | null {
-  for (const obj of objects(docs)) {
-    const exact = firstKey(obj, EXACT_LOCATION_KEY, (v): v is boolean => typeof v === 'boolean');
-    if (exact === null) continue;
-    return {
-      exact,
-      lat: firstKey(obj, LAT_KEY, isNumber),
-      lng: firstKey(obj, LNG_KEY, isNumber),
-      address: firstKey(obj, ADDRESS_KEY, isString),
-    };
+const isBoolean = (v: unknown): v is boolean => typeof v === 'boolean';
+
+/** The first boolean under a key like isVerified in the location object, at any depth: the host has its own isVerified elsewhere. */
+function nestedVerified(obj: Record<string, unknown>): boolean | null {
+  for (const o of objects(obj)) {
+    const verified = firstKey(o, VERIFIED_KEY, isBoolean);
+    if (verified !== null) return verified;
   }
   return null;
 }
 
-function jsonLdCoordinate(docs: unknown[]): { lat: number; lng: number } | null {
+interface FoundLocation {
+  lat: number | null;
+  lng: number | null;
+  exact: boolean;
+  verified: boolean | null;
+  subtitle: string | null;
+  address: string | null;
+}
+
+/** The location object: the one with a boolean key like isExactLocation. */
+function findLocation(docs: unknown[]): FoundLocation | null {
   for (const obj of objects(docs)) {
-    if (isNumber(obj['latitude']) && isNumber(obj['longitude'])) return { lat: obj['latitude'], lng: obj['longitude'] };
+    const exact = firstKey(obj, EXACT_LOCATION_KEY, isBoolean);
+    if (exact === null) continue;
+    const subtitle = firstKey(obj, SUBTITLE_KEY, isString)?.trim() || null;
+    return {
+      exact,
+      lat: firstKey(obj, LAT_KEY, isNumber),
+      lng: firstKey(obj, LNG_KEY, isNumber),
+      verified: nestedVerified(obj),
+      subtitle,
+      address: firstKey(obj, ADDRESS_KEY, isString),
+    };
   }
   return null;
 }
@@ -144,19 +106,11 @@ function accessOf(word: string | undefined): 'private' | 'dedicated' | 'shared' 
 }
 
 /** Every overview-style list of strings, such as ["5 guests", "2 bedrooms", "3 beds", "1 bath"]. */
-function overviewItems(docs: unknown[], html: string): string[] {
+function overviewItems(docs: unknown[]): string[] {
   const lines: string[] = [];
   for (const obj of objects(docs)) {
     const items = obj['items'];
     if (Array.isArray(items) && items.length > 0 && items.every(isString)) lines.push(...items);
-  }
-  if (lines.length > 0) return lines;
-  for (const m of html.matchAll(RAW.items)) {
-    try {
-      lines.push(...(JSON.parse(m[1]!) as string[]));
-    } catch {
-      // An unparseable list carries nothing to read.
-    }
   }
   return lines;
 }
@@ -185,8 +139,8 @@ function htmlToText(html: string): string {
 
 const TIME_AS_HOST_KEY = /^time_?as_?host$/i;
 
-/** The primary host's account id: the page's one DemandUser id, else the analytics hostId. */
-function hostId(docs: unknown[], html: string): string | null {
+/** The primary host's account id: the response's one DemandUser id. */
+function hostId(docs: unknown[]): string | null {
   const ids = new Set<string>();
   for (const obj of objects(docs)) {
     for (const value of Object.values(obj)) {
@@ -194,17 +148,15 @@ function hostId(docs: unknown[], html: string): string | null {
       if (id) ids.add(id);
     }
   }
-  if (ids.size === 1) return [...ids][0]!;
-  if (ids.size > 1) return null;
-  return soleMatch(html, RAW.hostId);
+  return ids.size === 1 ? [...ids][0]! : null;
 }
 
 /**
  * The host card: the one object with a timeAsHost key, beside the bio. A card
  * naming another account than the page's host is ignored.
  */
-function host(docs: unknown[], html: string): Host | null {
-  const id = hostId(docs, html);
+function host(docs: unknown[]): Host | null {
+  const id = hostId(docs);
   if (!id) return null;
   for (const obj of objects(docs)) {
     for (const card of Object.values(obj)) {
@@ -262,42 +214,28 @@ function pickLine<T extends { count: number | null }>(lines: string[], match: Re
   return candidates.find((c) => c.count !== null) ?? candidates[0] ?? null;
 }
 
-export function parseListingPage(id: ListingId, html: string): Listing {
-  const { json, jsonLd } = pageDocs(html);
-  return parseListingDocs(id, json, jsonLd, html);
-}
-
-/**
- * A listing from its JSON documents: the listing page's embedded GraphQL
- * state, or a StaysPdpSections response. `jsonLd` and `html` are the page's
- * fallbacks, empty for an API response.
- */
-export function parseListingDocs(id: ListingId, json: unknown[], jsonLd: unknown[], html: string): Listing {
+/** A listing from a StaysPdpSections response. */
+export function parseListing(id: ListingId, response: unknown): Listing {
+  const json = [response];
   if (isMissingListing(json)) throw new AirbnbError('NotFound', `listing ${id} is removed or hidden`);
 
   const location = findLocation(json);
-  const ld = jsonLdCoordinate(jsonLd);
-  const rawExact = soleMatch(html, RAW.exactLocation);
-  const lat = location?.lat ?? ld?.lat ?? null;
-  const lng = location?.lng ?? ld?.lng ?? null;
-  const exact = location?.exact ?? (rawExact === null ? null : rawExact === 'true');
+  const lat = location?.lat ?? null;
+  const lng = location?.lng ?? null;
+  const exact = location?.exact ?? null;
 
   const roomTypes = distinct(json, 'roomType', isString);
-  const roomTypeText = roomTypes.length === 1 ? roomTypes[0]! : roomTypes.find((t) => t in ROOM_TYPES) ?? soleMatch(html, RAW.roomType);
-  const rawNumber = (pattern: RegExp) => {
-    const v = soleMatch(html, pattern);
-    return v === null ? null : Number(v);
-  };
-  const guestCapacity = only(json, 'personCapacity', isNumber) ?? rawNumber(RAW.personCapacity);
-  const bedCount = only(json, 'bedCount', isNumber) ?? rawNumber(RAW.bedCount);
+  const roomTypeText = roomTypes.length === 1 ? roomTypes[0]! : (roomTypes.find((t) => t in ROOM_TYPES) ?? null);
+  const guestCapacity = only(json, 'personCapacity', isNumber);
+  const bedCount = only(json, 'bedCount', isNumber);
 
   if (lat === null && roomTypeText === null && guestCapacity === null) {
-    // Nothing on the page reads as a listing: Airbnb served something else.
-    throw new MarkerMissingError('listing page has none of the listing data markers');
+    // Nothing in the response reads as a listing: Airbnb served something else.
+    throw new MarkerMissingError('listing response has none of the listing data');
   }
-  if (lat === null || lng === null) throw new ShapeError('listing page has no coordinate');
+  if (lat === null || lng === null) throw new ShapeError('listing response has no coordinate');
 
-  const lines = [...overviewItems(json, html), ...sharingTitleItems(json)];
+  const lines = [...overviewItems(json), ...sharingTitleItems(json)];
   const bedrooms = pickLine(lines, /\bbedrooms?\b|^\s*studio\s*$/i, (t) => ({ count: parseBedrooms(t) }));
   const bathrooms = pickLine(lines, /\bbath/i, parseBathrooms);
   const bedLine = lines.find((t) => /^\s*\d+\s+beds?\s*$/i.test(t));
@@ -306,7 +244,7 @@ export function parseListingDocs(id: ListingId, json: unknown[], jsonLd: unknown
 
   return {
     id,
-    location: { lat, lng, exact },
+    location: { lat, lng, exact, verified: location?.verified ?? null, subtitle: location?.subtitle ?? null },
     address: location?.address ?? null,
     roomType: roomTypeText ? (ROOM_TYPES[roomTypeText] ?? null) : null,
     propertyType: only(json, 'propertyType', (v): v is string => typeof v === 'string' && /^[A-Z][A-Z_]*$/.test(v)),
@@ -315,7 +253,7 @@ export function parseListingDocs(id: ListingId, json: unknown[], jsonLd: unknown
     bedrooms,
     bathrooms,
     registration: registration(json),
-    host: host(json, html),
+    host: host(json),
     photoUrls: photos(json),
   };
 }
@@ -368,7 +306,7 @@ export async function fetchListing(call: Call, id: ListingId): Promise<Listing> 
   const { json, result } = await graphql(call, 'StaysPdpSections', listingVariables(id));
   return call.parse(result, () => {
     try {
-      return parseListingDocs(id, [json], [], '');
+      return parseListing(id, json);
     } catch (cause) {
       if (cause instanceof AirbnbError) {
         throw new AirbnbError(cause.category, cause.message, { exchange: result.exchange, cause });

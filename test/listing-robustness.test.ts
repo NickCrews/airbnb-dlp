@@ -1,22 +1,25 @@
 /**
- * The listing page parser against a real recorded page, altered the ways
- * Airbnb's pages could change: each layer must keep working when another
- * breaks. The client fetches StaysPdpSections instead of the page, so the
- * page lives in test/data rather than fixtures/.
+ * The listing parser against a real recorded StaysPdpSections response,
+ * altered the ways Airbnb's response could change: fields are found by key
+ * name and shape, so renamed wrappers and moved sections must not break them.
  */
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { describe, expect, it } from 'vitest';
-import { parseListingPage } from '../src/products/listing.ts';
+import { isMissingListing, parseListing } from '../src/products/listing.ts';
+import type { Listing } from '../src/types.ts';
 import { MarkerMissingError } from '../src/parse-errors.ts';
 
-const fixture = JSON.parse(gunzipSync(readFileSync(new URL('./data/listing-page-anchorage-ak.json.gz', import.meta.url))).toString());
-const page = fixture.recordings[0].response.body as string;
+const fixture = JSON.parse(gunzipSync(readFileSync(new URL('../fixtures/listings/anchorage-ak.json.gz', import.meta.url))).toString());
+const body = (fixture.recordings as { request: { url: string }; response: { body: string } }[]).find((r) =>
+  r.request.url.includes('/StaysPdpSections/'),
+)!.response.body;
 const id = fixture.inputs[0] as string;
-const baseline = parseListingPage(id, page);
+const parse = (text: string) => parseListing(id, JSON.parse(text));
+const baseline = parse(body);
 
-describe('listing page parser', () => {
-  it('reads every field from the recorded page', () => {
+describe('listing parser', () => {
+  it('reads every field from the recorded response', () => {
     expect(baseline.location).not.toBeNull();
     expect(baseline.roomType).not.toBeNull();
     expect(baseline.guestCapacity).not.toBeNull();
@@ -24,28 +27,51 @@ describe('listing page parser', () => {
     expect(baseline.photoUrls.length).toBeGreaterThan(0);
   });
 
-  it('survives a renamed exact-location flag', () => {
-    const changed = parseListingPage(id, page.replaceAll('"isExactLocation"', '"hasExactLocation"'));
+  it('reads the location subtitle and verified flag', () => {
+    expect(baseline.location?.subtitle).toBe('Anchorage, Alaska, United States');
+    expect(baseline.location?.verified).toBe(false);
+  });
+
+  it('fills the subtitle and verified flag on every recorded listing', () => {
+    const dir = new URL('../fixtures/listings/', import.meta.url);
+    const parsed: Listing[] = [];
+    for (const name of readdirSync(dir)) {
+      const fx = JSON.parse(gunzipSync(readFileSync(new URL(name, dir))).toString());
+      const recordings = (fx.recordings as { request: { url: string }; response: { body: string } }[]).filter((r) => r.request.url.includes('/StaysPdpSections/'));
+      recordings.forEach((r, i) => {
+        const response = JSON.parse(r.response.body);
+        if (!isMissingListing([response])) parsed.push(parseListing(fx.inputs[i] as string, response));
+      });
+    }
+    expect(parsed.length).toBeGreaterThanOrEqual(8);
+    for (const l of parsed) {
+      expect(l.location?.subtitle, l.id).toMatch(/\S/);
+      expect(typeof l.location?.verified, l.id).toBe('boolean');
+    }
+  });
+
+  it('takes the verified flag from the location, not from the host', () => {
+    const changed = parse(body.replace(/("verificationDetails":\{[^{}]*"isVerified":)false/, '$1true'));
+    expect(changed.location?.verified).toBe(true);
+    expect(changed.host).toEqual(baseline.host);
+  });
+
+  it('survives a renamed wrapper around the verified flag', () => {
+    const changed = parse(body.replaceAll('"verificationDetails"', '"locationVerification"'));
     expect(changed.location).toEqual(baseline.location);
   });
 
-  it('survives renamed script ids and wrappers', () => {
-    const changed = parseListingPage(id, page.replaceAll('data-deferred-state-0', 'data-state-x').replaceAll('niobeClientData', 'apolloState'));
+  it('survives a renamed exact-location flag', () => {
+    const changed = parse(body.replaceAll('"isExactLocation"', '"hasExactLocation"'));
+    expect(changed.location).toEqual(baseline.location);
+  });
+
+  it('survives renamed wrappers around the sections', () => {
+    const changed = parse(body.replaceAll('"stayProductDetailPage"', '"stayPdp"').replaceAll('"presentation"', '"viewer"'));
     expect(changed).toEqual(baseline);
   });
 
-  it('falls back to JSON-LD and raw patterns when the embedded JSON does not parse', () => {
-    const broken = page.replace(/(<script\b[^>]*id="data-deferred-state-0"[^>]*>)\{/, '$1{,');
-    const changed = parseListingPage(id, broken);
-    expect(changed.location?.lat).toBeCloseTo(baseline.location!.lat, 3);
-    expect(changed.location?.exact).toBe(baseline.location!.exact);
-    expect(changed.roomType).toBe(baseline.roomType);
-    expect(changed.guestCapacity).toBe(baseline.guestCapacity);
-    expect(changed.beds).toBe(baseline.beds);
-    expect(changed.host?.id).toBe(baseline.host?.id);
-  });
-
-  it('treats a page with no listing data as a bot page', () => {
-    expect(() => parseListingPage(id, '<html><body>Please verify you are a human</body></html>')).toThrow(MarkerMissingError);
+  it('treats a response with no listing data as something other than a listing', () => {
+    expect(() => parseListing(id, { data: { presentation: null } })).toThrow(MarkerMissingError);
   });
 });

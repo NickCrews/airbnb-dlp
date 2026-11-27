@@ -194,12 +194,18 @@ PR_BRANCH=release/npm
 ROOT=$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)
 WORK="${TMPDIR:-/tmp}/airbnb-dlp-first-publish"
 TARBALL="$WORK/$PACKAGE-$FIRST_VERSION.tgz"
-TOKEN_DAYS=90
 
 done_already() { printf '  %s✓ already done:%s %s\n' "$GREEN" "$RESET" "$1"; }
 fail() { printf '  %s✗ %s%s\n' "$RED" "$1" "$RESET"; exit 1; }
 run() { printf '  %s$ %s%s\n' "$DIM" "$*" "$RESET"; "$@"; }
 published() { npm view "$PACKAGE@$FIRST_VERSION" version >/dev/null 2>&1; }
+# npm can hold a new package's first version for review. Until it is released,
+# the registry lists only its placeholder 0.0.0-stage, npm view answers 404 for
+# the version, and npm refuses to publish that version again.
+staged() { ! published && npm view "$PACKAGE" versions --json 2>/dev/null | grep -q '0.0.0-stage'; }
+# Whether $FIRST_VERSION has left this machine: public, or held by npm.
+sent() { published || staged; }
+tag_exists() { gh api "repos/$REPO/git/ref/tags/v$FIRST_VERSION" >/dev/null 2>&1; }
 workflow_state() { gh api "repos/$REPO/actions/workflows/release.yml" --jq .state; }
 remove_work() {
   git -C "$ROOT" worktree remove --force "$WORK/src" >/dev/null 2>&1 || true
@@ -229,8 +235,8 @@ pause
 
 # ── 2 ─────────────────────────────────────────────────────────────────────
 stage "Pause the Release workflow"
-if published; then
-  done_already "$PACKAGE@$FIRST_VERSION is on npm, so releases need no pause"
+if sent; then
+  done_already "$PACKAGE@$FIRST_VERSION is already on npm, so releases need no pause"
 elif [[ "$(workflow_state)" != active ]]; then
   done_already "Release workflow is disabled"
 else
@@ -283,7 +289,7 @@ pause
 
 # ── 5 ─────────────────────────────────────────────────────────────────────
 stage "Build $FIRST_VERSION and live-check the tarball"
-if published; then
+if sent; then
   done_already "$PACKAGE@$FIRST_VERSION is on npm"
 else
   say "Builds the merge commit ${SHA:0:12} in $WORK, installs the tarball into an"
@@ -307,15 +313,28 @@ pause
 stage "Publish $FIRST_VERSION to npm"
 if published; then
   done_already "$PACKAGE@$FIRST_VERSION is on npm"
+elif staged; then
+  warn "npm is holding $PACKAGE@$FIRST_VERSION for review: the registry shows only its"
+  warn "placeholder 0.0.0-stage, and the version cannot be published again."
+  note "The remaining stages need the package to exist, not $FIRST_VERSION to be public."
+  note "Re-run the wizard once https://www.npmjs.com/package/$PACKAGE shows $FIRST_VERSION."
+  SKIPPED+=("GitHub release v$FIRST_VERSION: re-run the wizard once npm shows $PACKAGE@$FIRST_VERSION")
 else
   [[ -f "$TARBALL" ]] || fail "No tarball at $TARBALL: re-run the wizard to rebuild it."
   warn "Publishing is permanent: npm never accepts $PACKAGE@$FIRST_VERSION again, even after unpublishing."
   note "Published from this machine, $FIRST_VERSION has no provenance; every later release has it."
   confirm "Publish $(basename "$TARBALL") to npm as $NPM_USER?" || fail "Stopped before publishing. Re-run to continue."
   run npm publish "$TARBALL" --access public
-  for _ in 1 2 3 4 5 6; do published && break; sleep 5; done
-  published || fail "npm publish finished but npm view does not show $FIRST_VERSION yet. Wait a minute and re-run."
-  printf '  %s✓ published%s https://www.npmjs.com/package/%s\n' "$GREEN" "$RESET" "$PACKAGE"
+  for _ in 1 2 3 4 5 6; do sent && break; sleep 5; done
+  if published; then
+    printf '  %s✓ published%s https://www.npmjs.com/package/%s\n' "$GREEN" "$RESET" "$PACKAGE"
+  elif staged; then
+    warn "npm is holding $PACKAGE@$FIRST_VERSION for review. The wizard continues; re-run it"
+    warn "once npm shows the version, to create its GitHub release."
+    SKIPPED+=("GitHub release v$FIRST_VERSION: re-run the wizard once npm shows $PACKAGE@$FIRST_VERSION")
+  else
+    fail "npm publish finished but npm does not show $FIRST_VERSION yet. Wait a minute and re-run."
+  fi
 fi
 pause
 
@@ -323,6 +342,14 @@ pause
 stage "Tag v$FIRST_VERSION and create its GitHub release"
 if gh release view "v$FIRST_VERSION" --repo "$REPO" >/dev/null 2>&1; then
   done_already "GitHub release v$FIRST_VERSION exists"
+elif ! published; then
+  say "The tag tells the Release workflow that $FIRST_VERSION is taken, so the next release is the next patch."
+  if tag_exists; then
+    done_already "tag v$FIRST_VERSION exists"
+  else
+    run gh api "repos/$REPO/git/refs" -f ref="refs/tags/v$FIRST_VERSION" -f sha="$SHA" --jq .ref
+  fi
+  note "The GitHub release waits until npm shows $FIRST_VERSION, so it never points at a version users cannot install."
 else
   say "The tag tells the Release workflow that $FIRST_VERSION is out, so the next release is the next patch."
   notes="$(mktemp)"
@@ -350,27 +377,24 @@ run npm trust list "$PACKAGE"
 pause
 
 # ── 9 ─────────────────────────────────────────────────────────────────────
-stage "Token for deprecating old versions"
-say "CI deprecates earlier versions after a repair. Trusted publishing does not"
-say "cover npm deprecate, so it needs a token limited to $PACKAGE, stored as"
-say "the npm environment's secret NPM_TOKEN."
-if gh secret list --repo "$REPO" --env npm 2>/dev/null | grep -q '^NPM_TOKEN' \
-   && ! confirm "NPM_TOKEN is already set on the npm environment. Replace it?"; then
-  done_already "NPM_TOKEN is set on the npm environment"
+stage "Refuse tokens for $PACKAGE"
+say "CI publishes through the trusted publisher alone, so no npm token is needed."
+say "This stage removes any left over and makes the package refuse tokens, so a"
+say "leaked token cannot publish it."
+if gh secret list --repo "$REPO" --env npm 2>/dev/null | grep -q '^NPM_TOKEN'; then
+  run gh secret delete NPM_TOKEN --repo "$REPO" --env npm
 else
-  note "npm prints the token once. Copy it (it starts with npm_) and paste it below."
-  run npm token create --name "$PACKAGE-deprecate-$(date +%Y%m%d)" \
-    --token-description "CI: npm deprecate after repairs ($REPO release.yml)" \
-    --packages "$PACKAGE" --packages-and-scopes-permission read-write --bypass-2fa --expires "$TOKEN_DAYS"
-  ask_secret NPM_DEPRECATE_TOKEN "Paste the token:"
-  [[ "$NPM_DEPRECATE_TOKEN" == npm_* ]] || fail "That does not look like an npm token (npm_...). Re-run this wizard to try again."
-  printf '%s' "$NPM_DEPRECATE_TOKEN" | gh secret set NPM_TOKEN --repo "$REPO" --env npm
-  unset NPM_DEPRECATE_TOKEN
-  WRITTEN_SECRET+=("NPM_TOKEN (environment npm)")
-  printf '  %s✓ set%s secret NPM_TOKEN on environment npm\n' "$GREEN" "$RESET"
-  expiry=$(date -v+"${TOKEN_DAYS}"d +%F 2>/dev/null || date -d "+${TOKEN_DAYS} days" +%F)
-  warn "The token expires around $expiry. Rotate it before then (docs/release.md, Rotating NPM_TOKEN)."
+  done_already "no NPM_TOKEN secret on the npm environment"
 fi
+run npm token list
+note "Revoke any token CI no longer needs, such as $PACKAGE-deprecate-*. npm asks for two-factor authentication."
+while :; do
+  ask TOKEN_ID "Token id to revoke (Enter when done):"
+  [[ -z "$TOKEN_ID" ]] && break
+  run npm token revoke "$TOKEN_ID" || warn "npm did not revoke $TOKEN_ID."
+done
+say "Setting Publishing access to: require two-factor authentication and disallow tokens."
+run npm access set mfa=publish "$PACKAGE"
 pause
 
 # ── 10 ────────────────────────────────────────────────────────────────────
@@ -380,7 +404,11 @@ if [[ "$(workflow_state)" == active ]]; then
 else
   run gh workflow enable release.yml --repo "$REPO"
 fi
-remove_work
+if gh release view "v$FIRST_VERSION" --repo "$REPO" >/dev/null 2>&1; then
+  remove_work
+else
+  note "Kept $WORK: its live-check report goes into the v$FIRST_VERSION release notes."
+fi
 say "The next merge to main that changes the package is checked against"
 say "airbnb.com and published as the next patch through trusted publishing."
 pause
