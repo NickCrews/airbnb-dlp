@@ -1,5 +1,5 @@
 import { classifyResponse, classifyThrown } from './classify.ts';
-import { AirbnbError, BlockedError, type Exchange, MAX_EXCHANGE_BODY, makeError } from './errors.ts';
+import { AirbnbError, BlockedError, type ErrorCategory, type Exchange, MAX_EXCHANGE_BODY, makeError } from './errors.ts';
 import { MarkerMissingError, ShapeError } from './parse-errors.ts';
 import type { Scheduler } from './scheduler.ts';
 import type {
@@ -8,6 +8,8 @@ import type {
   Clock,
   Inputs,
   Outcome,
+  Product,
+  TraceEvent,
   Transport,
   TransportRequest,
   TransportResponse,
@@ -21,6 +23,9 @@ export interface ClientContext {
   currency: string;
   concurrency: number;
   nextCallId(): number;
+  nextRequestId(): number;
+  /** The caller's trace option, made safe to call: it never throws. */
+  trace(event: TraceEvent): void;
   /** Airbnb's public web API key, read from the homepage once per client. */
   apiKey: { value: string | null; pending: Promise<string> | null };
 }
@@ -141,10 +146,13 @@ export class Call {
    * any other failure is thrown as an AirbnbError. A Blocked response ends the call.
    */
   async fetch(request: TransportRequest, accept: readonly number[] = []): Promise<FetchResult> {
+    const { clock, trace } = this.ctx;
+    const id = this.ctx.nextRequestId();
     for (let attempt = 0; ; attempt++) {
       this.checkBudget();
       await this.gate();
       this.checkBudget();
+      const queued = clock.now();
       let release: () => void;
       try {
         release = await this.ctx.scheduler.acquire(this.id, this.signal);
@@ -152,26 +160,32 @@ export class Call {
         throw this.error ?? new AirbnbError('Aborted', 'the call was aborted');
       }
       let response: TransportResponse;
+      const sent = clock.now();
       try {
         this.checkBudget();
         this.requests++;
+        trace({ type: 'request', at: sent, call: this.id, request: id, attempt, method: request.method, url: request.url, queuedMs: sent - queued });
         response = await this.send(request);
       } catch (cause) {
         release();
         if (this.error) throw this.error;
         if (cause instanceof AirbnbError) throw cause;
         const category = classifyThrown(cause);
+        const at = clock.now();
+        trace({ type: 'request.error', at, call: this.id, request: id, attempt, ms: at - sent, category, message: String(cause) });
         const exchange = captureExchange(request, null);
         if (category === 'Transient' && attempt < MAX_RETRIES) {
-          await this.backoff(attempt);
+          await this.backoff(id, attempt, category);
           continue;
         }
         throw makeError(category, `request failed: ${String(cause)}`, { exchange, cause });
       }
       release();
+      const at = clock.now();
+      const accepted = accept.includes(response.status);
+      const category = accepted ? null : classifyResponse(response);
+      trace({ type: 'response', at, call: this.id, request: id, attempt, status: response.status, bytes: response.body.length, ms: at - sent, category });
       const exchange = captureExchange(request, response);
-      if (accept.includes(response.status)) return { response, exchange };
-      const category = classifyResponse(response);
       if (category === null) return { response, exchange };
       if (category === 'Blocked') {
         const error = new BlockedError(`blocked: HTTP ${response.status} from ${request.url}`, { exchange });
@@ -179,15 +193,17 @@ export class Call {
         throw error;
       }
       if (category === 'Transient' && attempt < MAX_RETRIES) {
-        await this.backoff(attempt);
+        await this.backoff(id, attempt, category);
         continue;
       }
       throw makeError(category, `HTTP ${response.status} from ${request.url}`, { exchange });
     }
   }
 
-  private backoff(attempt: number): Promise<void> {
-    return this.sleep(RETRY_BASE_MS * 2 ** attempt * (0.5 + this.ctx.random()));
+  private backoff(request: number, attempt: number, category: ErrorCategory): Promise<void> {
+    const delayMs = RETRY_BASE_MS * 2 ** attempt * (0.5 + this.ctx.random());
+    this.ctx.trace({ type: 'retry', at: this.ctx.clock.now(), call: this.id, request, attempt, delayMs, category });
+    return this.sleep(delayMs);
   }
 
   /** Runs a parser on a fetched response, mapping its failures to categories. */
@@ -293,6 +309,7 @@ export type InputWork<I, T> = (call: Call, input: I, emit: (item: T) => Promise<
 
 export function startBatch<I, T>(
   ctx: ClientContext,
+  product: Product,
   options: CallOptions,
   inputs: Inputs<I>,
   work: InputWork<I, T>,
@@ -301,7 +318,12 @@ export function startBatch<I, T>(
   const channel = new Channel<T>();
   call.gate = () => channel.waitForSpace();
   const incomplete: { input: I; error: AirbnbError }[] = [];
-  const emit = (item: T) => channel.push(item);
+  let items = 0;
+  const emit = (item: T) => {
+    items++;
+    return channel.push(item);
+  };
+  ctx.trace({ type: 'call.start', at: ctx.clock.now(), call: call.id, product });
 
   const drive = async (): Promise<Outcome<I>> => {
     const iterator = iterate(inputs);
@@ -338,9 +360,21 @@ export function startBatch<I, T>(
     return { error: call.error, incomplete, requests: call.requests };
   };
 
-  const done = drive().catch(
-    (cause): Outcome<I> => ({ error: toAirbnbError(cause), incomplete, requests: call.requests }),
-  );
+  const done = drive()
+    .catch((cause): Outcome<I> => ({ error: toAirbnbError(cause), incomplete, requests: call.requests }))
+    .then((outcome) => {
+      ctx.trace({
+        type: 'call.end',
+        at: ctx.clock.now(),
+        call: call.id,
+        product,
+        items,
+        requests: outcome.requests,
+        incomplete: outcome.incomplete.length,
+        error: outcome.error?.category ?? null,
+      });
+      return outcome;
+    });
   let read = false;
 
   return {
@@ -378,12 +412,14 @@ export function startBatch<I, T>(
 /** A batch of single-value products: one Result per input. */
 export function startResultBatch<I, T>(
   ctx: ClientContext,
+  product: Product,
   options: CallOptions,
   inputs: Inputs<I>,
   fetchOne: (call: Call, input: I) => Promise<T>,
 ) {
   return startBatch<I, { input: I; ok: true; value: T } | { input: I; ok: false; error: AirbnbError }>(
     ctx,
+    product,
     options,
     inputs,
     async (call, input, emit) => {

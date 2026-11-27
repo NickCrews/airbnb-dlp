@@ -1,0 +1,137 @@
+# Benchmarks an implementation on several runners at once, each with its own
+# IP address: every runner runs `pnpm benchmark`, which runs the live check on
+# the candidate and the base and measures them from the client's trace, and a
+# last job merges the runners' results and applies contract/benchmark.json.
+#
+#   gh workflow run benchmark.yml --ref main -f candidate=<branch|sha|PR number> [-f base=main] [-f runners=5]
+#
+# Always dispatch it on main: the workflow, the live check and the measurement
+# come from the ref it is dispatched on, and only the library under test comes
+# from `candidate` and `base`. The weekly run benchmarks main alone, as the
+# reference for a candidate whose base fails its own live check.
+name: Benchmark
+on:
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: Branch, commit SHA or pull request number to benchmark
+        type: string
+        required: true
+      base:
+        description: What to compare with (branch, SHA or PR number); empty for absolute numbers only
+        type: string
+        default: main
+      runners:
+        description: Runners, each with its own IP address (1 to 5)
+        type: string
+        default: '5'
+  schedule:
+    - cron: '43 6 * * 1'
+permissions:
+  contents: read
+concurrency:
+  group: benchmark
+  cancel-in-progress: false
+
+env:
+  CANDIDATE: ${{ inputs.candidate || 'main' }}
+  BASE: ${{ github.event_name == 'schedule' && '' || inputs.base }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      runners: ${{ steps.plan.outputs.runners }}
+    steps:
+      - id: plan
+        env:
+          RUNNERS: ${{ inputs.runners || '5' }}
+        run: |
+          case "$RUNNERS" in [1-5]) ;; *) echo "::error::runners must be 1 to 5"; exit 1 ;; esac
+          echo "runners=$(jq -cn --argjson n "$RUNNERS" '[range(1; $n + 1)]')" >> "$GITHUB_OUTPUT"
+
+  run:
+    name: runner ${{ matrix.runner }}
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    # No secrets and a read-only token: the candidate's code runs here.
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: ${{ fromJSON(needs.plan.outputs.runners) }}
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Resolve the candidate and base
+        id: refs
+        run: |
+          resolve() {
+            case "$1" in
+              '') echo '' ;;
+              *[!0-9]*) git fetch -q origin "$1" && git rev-parse FETCH_HEAD ;;
+              *) git fetch -q origin "refs/pull/$1/head" && git rev-parse FETCH_HEAD ;;
+            esac
+          }
+          echo "candidate=$(resolve "$CANDIDATE")" >> "$GITHUB_OUTPUT"
+          echo "base=$(resolve "$BASE")" >> "$GITHUB_OUTPUT"
+      - name: Benchmark
+        env:
+          CANDIDATE_SHA: ${{ steps.refs.outputs.candidate }}
+          BASE_SHA: ${{ steps.refs.outputs.base }}
+          RUNNER: ${{ matrix.runner }}
+        run: |
+          # Odd runners measure the candidate first, even ones the base.
+          ORDER=$([ $((RUNNER % 2)) -eq 1 ] && echo candidate-first || echo base-first)
+          node scripts/benchmark/run.ts --candidate "$CANDIDATE_SHA" ${BASE_SHA:+--base "$BASE_SHA"} \
+            --label "runner-$RUNNER" --order "$ORDER" --out .benchmark || true
+          cat .benchmark/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+      - if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: benchmark-runner-${{ matrix.runner }}
+          path: .benchmark/
+          retention-days: 30
+          if-no-files-found: ignore
+
+  merge:
+    name: merge and judge
+    needs: run
+    if: always() && needs.run.result != 'skipped'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 22, package-manager-cache: false }
+      - uses: actions/download-artifact@v5
+        with: { pattern: benchmark-runner-*, path: .benchmark/runners }
+      # The latest weekly benchmark of main, for a candidate whose base fails its own live check.
+      - name: Fetch the reference
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id=$(gh run list --workflow benchmark.yml --event schedule --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$id" ] && gh run download "$id" -n benchmark-merged -D .benchmark/reference; then
+            echo "REFERENCE=--reference .benchmark/reference/benchmark.json" >> "$GITHUB_ENV"
+          fi
+      - name: Merge
+        run: |
+          node scripts/benchmark/merge.ts .benchmark/runners $REFERENCE --out .benchmark/merged
+      - if: always()
+        run: cat .benchmark/merged/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: benchmark-merged
+          path: .benchmark/merged/
+          retention-days: 90
+          if-no-files-found: ignore

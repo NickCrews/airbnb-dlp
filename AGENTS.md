@@ -14,10 +14,22 @@ pnpm test                       # unit and fixture tests
 pnpm typecheck
 pnpm lint
 pnpm api-snapshot               # fails if the public API changed
-pnpm live-check --small         # live run against airbnb.com: about 40 requests
+pnpm live-check --small         # live run against airbnb.com: about 55 requests
+pnpm benchmark --base main      # the live check on this tree and on main, measured: about 110 requests
 pnpm record listings            # re-record one product's fixtures from live responses
 node test/run-fixtures.ts       # the fixture suite outside vitest (also: bun, deno run -A)
 ```
+
+## Measuring performance
+
+The benchmark runs the live check, so "works" means the same thing in both: an implementation completes when its live check passes. It adds what the client's trace shows: wall time, requests, refusals, retries, latency and bytes, in total and per product.
+
+- Locally: `pnpm benchmark` measures this working tree, uncommitted changes included. `--base main` (or any git ref or directory) also measures the base on the same machine and reports a speed ratio: base time / candidate time, so above 1 is faster. Results go to `.benchmark/`: `benchmark.json`, `summary.md`, and each side's trace (`<side>.trace.ndjson`), log and report.
+- On several IP addresses: push a branch, then `gh workflow run benchmark.yml --ref main -f candidate=<branch, SHA or PR number>`. Five runners each run `pnpm benchmark --base main` and a last job merges them and applies `contract/benchmark.json`: the candidate's live check passes on every runner, it is refused no more often than the base, and it runs at least 0.9 times as fast. Read the result with `gh run download <run id> -n benchmark-merged`.
+
+Iterate locally; benchmark on the runners once a change looks right. One run on one machine shows whether something works, not whether it is stable.
+
+## How the code is laid out
 
 ## How the code is laid out
 

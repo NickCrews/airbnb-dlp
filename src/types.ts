@@ -1,4 +1,4 @@
-import type { AirbnbError } from './errors.ts';
+import type { AirbnbError, ErrorCategory } from './errors.ts';
 
 /**
  * A decimal string: newer ids have 19 digits, beyond a JS number's precision.
@@ -56,7 +56,62 @@ export interface ClientOptions {
   currency?: string;
   /** Each value can only lower the default. */
   limits?: { requestsPerSecond?: number; concurrency?: number };
+  /**
+   * Receives an event for each call and each request: when it was queued and
+   * sent, its status, size and time, and each retry. For logs, metrics and
+   * benchmarks. It runs synchronously on the request path, so keep it cheap;
+   * an error it throws is ignored.
+   */
+  trace?: (event: TraceEvent) => void;
 }
+
+/**
+ * What a client did, as `trace` receives it. `at` is the client clock's time in
+ * milliseconds. `call` numbers each bulk call and `request` each request, from
+ * 1 per client; a retried request keeps its number with a higher `attempt`.
+ */
+export type TraceEvent =
+  | { type: 'call.start'; at: number; call: number; product: Product }
+  | {
+      type: 'call.end';
+      at: number;
+      call: number;
+      product: Product;
+      /** Items the call yielded, failed results included. */
+      items: number;
+      requests: number;
+      incomplete: number;
+      /** What ended the call early, or null. */
+      error: ErrorCategory | null;
+    }
+  | {
+      type: 'request';
+      at: number;
+      call: number;
+      request: number;
+      attempt: number;
+      method: TransportRequest['method'];
+      url: string;
+      /** Time spent waiting for the client's pace and concurrency limits. */
+      queuedMs: number;
+    }
+  | {
+      type: 'response';
+      at: number;
+      call: number;
+      request: number;
+      attempt: number;
+      status: number;
+      bytes: number;
+      ms: number;
+      /** How the status was classified, or null for a response the product parses. */
+      category: ErrorCategory | null;
+    }
+  | { type: 'request.error'; at: number; call: number; request: number; attempt: number; ms: number; category: ErrorCategory; message: string }
+  | { type: 'retry'; at: number; call: number; request: number; attempt: number; delayMs: number; category: ErrorCategory };
+
+/** The client method a call came from. */
+export type Product = 'search' | 'listings' | 'calendars' | 'priceQuotes' | 'reviews';
 
 export interface Client {
   search(queries: Inputs<SearchQuery>, options?: CallOptions): Batch<SearchQuery, SearchHit>;

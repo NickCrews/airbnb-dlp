@@ -28,6 +28,8 @@ export function makeCreateClient(defaultTransport: (() => Transport) | null) {
     const rps = lower(options.limits?.requestsPerSecond, DEFAULT_REQUESTS_PER_SECOND, 'requestsPerSecond');
     const concurrency = Math.floor(lower(options.limits?.concurrency, DEFAULT_CONCURRENCY, 'concurrency')) || 1;
     let callIds = 0;
+    let requestIds = 0;
+    const trace = options.trace;
     const ctx: ClientContext = {
       transport,
       clock,
@@ -36,17 +38,27 @@ export function makeCreateClient(defaultTransport: (() => Transport) | null) {
       currency: options.currency ?? 'USD',
       concurrency,
       nextCallId: () => ++callIds,
+      nextRequestId: () => ++requestIds,
+      trace: trace
+        ? (event) => {
+            try {
+              trace(event);
+            } catch {
+              // A tracer's failure must not change what the call does.
+            }
+          }
+        : () => {},
       apiKey: { value: null, pending: null },
     };
     return {
       search: (queries, opts = {}) =>
-        startBatch(ctx, opts, queries, (call, query, emit) => runSearch(ctx, call, query, emit)),
-      listings: (ids, opts = {}) => startResultBatch(ctx, opts, ids, fetchListing),
+        startBatch(ctx, 'search', opts, queries, (call, query, emit) => runSearch(ctx, call, query, emit)),
+      listings: (ids, opts = {}) => startResultBatch(ctx, 'listings', opts, ids, fetchListing),
       calendars: (ids, opts = {}) =>
-        startResultBatch(ctx, opts, ids, (call, id) => fetchCalendar(call, id, opts.months ?? DEFAULT_MONTHS)),
-      priceQuotes: (stays, opts = {}) => startResultBatch(ctx, opts, stays, fetchPriceQuote),
+        startResultBatch(ctx, 'calendars', opts, ids, (call, id) => fetchCalendar(call, id, opts.months ?? DEFAULT_MONTHS)),
+      priceQuotes: (stays, opts = {}) => startResultBatch(ctx, 'priceQuotes', opts, stays, fetchPriceQuote),
       reviews: (ids, opts = {}) =>
-        startResultBatch(ctx, opts, ids, (call, id) => fetchReviews(call, id, opts.limit ?? 'all')),
+        startResultBatch(ctx, 'reviews', opts, ids, (call, id) => fetchReviews(call, id, opts.limit ?? 'all')),
     };
   };
 }
