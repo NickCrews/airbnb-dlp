@@ -90,13 +90,14 @@ jobs:
           # Odd runners measure the candidate first, even ones the base.
           ORDER=$([ $((RUNNER % 2)) -eq 1 ] && echo candidate-first || echo base-first)
           node scripts/benchmark/run.ts --candidate "$CANDIDATE_SHA" ${BASE_SHA:+--base "$BASE_SHA"} \
-            --label "runner-$RUNNER" --order "$ORDER" --out .benchmark || true
-          cat .benchmark/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+            --label "runner-$RUNNER" --order "$ORDER" --out benchmark-out || true
+          cat benchmark-out/summary.md >> "$GITHUB_STEP_SUMMARY" || true
       - if: always()
         uses: actions/upload-artifact@v5
         with:
           name: benchmark-runner-${{ matrix.runner }}
-          path: .benchmark/
+          # Not a dot directory: upload-artifact leaves hidden paths out.
+          path: benchmark-out/
           retention-days: 30
           if-no-files-found: ignore
 
@@ -113,25 +114,25 @@ jobs:
       - uses: actions/setup-node@v5
         with: { node-version: 22, package-manager-cache: false }
       - uses: actions/download-artifact@v5
-        with: { pattern: benchmark-runner-*, path: .benchmark/runners }
+        with: { pattern: benchmark-runner-*, path: benchmark-out/runners }
       # The latest weekly benchmark of main, for a candidate whose base fails its own live check.
       - name: Fetch the reference
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           id=$(gh run list --workflow benchmark.yml --event schedule --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-          if [ -n "$id" ] && gh run download "$id" -n benchmark-merged -D .benchmark/reference; then
-            echo "REFERENCE=--reference .benchmark/reference/benchmark.json" >> "$GITHUB_ENV"
+          if [ -n "$id" ] && gh run download "$id" -n benchmark-merged -D benchmark-out/reference; then
+            echo "REFERENCE=--reference benchmark-out/reference/benchmark.json" >> "$GITHUB_ENV"
           fi
       - name: Merge
         run: |
-          node scripts/benchmark/merge.ts .benchmark/runners $REFERENCE --out .benchmark/merged
+          node scripts/benchmark/merge.ts benchmark-out/runners $REFERENCE --out benchmark-out/merged
       - if: always()
-        run: cat .benchmark/merged/summary.md >> "$GITHUB_STEP_SUMMARY"
+        run: cat benchmark-out/merged/summary.md >> "$GITHUB_STEP_SUMMARY" || true
       - if: always()
         uses: actions/upload-artifact@v5
         with:
           name: benchmark-merged
-          path: .benchmark/merged/
+          path: benchmark-out/merged/
           retention-days: 90
           if-no-files-found: ignore
