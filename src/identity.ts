@@ -1,7 +1,8 @@
 /**
  * Request identity and pacing: what every request says about itself and how
- * fast requests go. Maintainer-only; see AGENTS.md. The TLS fingerprint lives
- * in the transport (src/transport/).
+ * fast requests go. The repair agent may change these to match current Chrome
+ * or to go slower, never faster (AGENTS.md); such changes need the maintainer's
+ * review. The TLS fingerprint lives in the transport (src/transport/).
  */
 
 export const ORIGIN = 'https://www.airbnb.com';

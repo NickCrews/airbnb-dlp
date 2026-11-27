@@ -39,7 +39,7 @@ Search has no room-type filter: Airbnb's own filter ignores some room types, and
 
 Every method is bulk and returns a `Batch`, modelled on fetch's `Response`. `items()` streams results as they finish, and `outcome()` resolves with what ended the call early, which inputs are incomplete, and how many requests were made. It never rejects. One listing failing yields a typed error for that item and the rest continue. A `Blocked` failure ends the call.
 
-One client holds one request budget, shared by all its calls: at most 1 request a second and 4 in flight by default. A caller can lower these, set `maxRequests` or `maxDurationMs`, or pass an `AbortSignal`, but cannot raise the rate. When Airbnb blocks requests, the library reports `Blocked`; it does not change its fingerprint or route around the block.
+One client holds one request budget, shared by all its calls: at most 1 request a second and 4 in flight by default. A caller can lower these, set `maxRequests` or `maxDurationMs`, or pass an `AbortSignal`, but cannot raise the rate. When Airbnb blocks requests, the library reports `Blocked`. The repair loop may update headers and the TLS fingerprint to match current Chrome, or slow down, but never uses proxies, rotates IP addresses or solves challenges.
 
 ## Runtimes
 
@@ -65,7 +65,7 @@ The repair loop needs these repository settings:
 - **Agent**: the Claude GitHub App installed, secret `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`, so runs draw on the maintainer's Claude subscription), variable `AGENT_BOT_LOGIN` (the login its pull requests are opened by), optional `AGENT_MAX_RUNS_PER_MONTH` (default 20).
 - **Ruleset on `main`**: require a pull request, code-owner review, and the status checks `checks`, `fixtures (node)`, `fixtures (bun)`, `fixtures (deno)`, `fixtures (browser)`, `path-allowlist` and `live-check (node)`, each pinned to GitHub Actions. The only bypass is repository admins in pull-request mode, so the maintainer can merge their own pull requests to code-owned paths but nobody can push to `main` directly. Allow auto-merge.
 - **npm**: secret `NPM_TOKEN` for releases.
-- Labels: `live-check`, `agent-repair`, `needs-maintainer`, and `category:<name>` for each failure category (created on first use).
+- Labels: `live-check`, `agent-repair`, `needs-maintainer`, `drill`, and `category:<name>` for each failure category (created on first use). Every live-check issue gets `agent-repair`; the agent adds `needs-maintainer` when it cannot fix one.
 
 ## Drills
 
@@ -76,7 +76,7 @@ The **Drill** workflow (Actions, Run workflow) tests the self-healing loop witho
 | `none` | nothing: a plain full live-check run | none |
 | `stale-hash` | the reviews query's persisted-query hash | RequestRejected, repaired by the agent |
 | `parser-break` | the calendar parser's date field | ResponseChanged, repaired by the agent |
-| `blocked` | every response becomes a 429 | Blocked, handed to the maintainer; the agent stays out |
+| `blocked` | every response in the drill's live check becomes a 429 | Blocked; the agent's own run does not reproduce it, so it closes or hands over the issue without a pull request |
 
 A drill commits the breakage to a new `drill/<run id>` branch, runs the live check there, and files the issue through the real path with a `drill` label. The agent repairs against the drill branch. The drill then waits for the required checks on the agent's pull request, merges it into the drill branch, and runs the live check again. The run summary has a pass or fail for each step. Afterwards the drill closes its issue and deletes its branch, unless `keep_branch` is set. Nothing touches `main` and nothing is released. Drill runs count toward the agent's monthly run limit.
 

@@ -27,8 +27,6 @@ export interface Thresholds {
   };
   ranges: { nightlyPriceUsd: { min: number; max: number }; calendarMonths: number };
   coverage: { auditBoxes: number; maxMissShare: number };
-  blockedRunsBeforeMaintainer: number;
-  transientHoursBeforeMaintainer: number;
 }
 
 export interface Failure {

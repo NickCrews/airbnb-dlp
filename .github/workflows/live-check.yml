@@ -82,16 +82,6 @@ jobs:
         with: { node-version: 22, package-manager-cache: false }
       - uses: actions/download-artifact@v5
         with: { pattern: live-check-report-*, path: .live-check/now }
-      - name: Fetch earlier reports
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p .live-check/history
-          gh run list --workflow live-check.yml --event schedule --status completed --limit 12 --json databaseId --jq '.[].databaseId' |
-          while read -r id; do
-            [ "$id" = "${{ github.run_id }}" ] && continue
-            gh run download "$id" -n live-check-report-node -D ".live-check/history/$id" 2>/dev/null || true
-          done
       # Issues opened with the default GITHUB_TOKEN start no workflow, so the
       # live-check GitHub App files them.
       - uses: actions/create-github-app-token@v2
@@ -104,5 +94,5 @@ jobs:
           GITHUB_TOKEN: ${{ steps.app.outputs.token }}
         run: |
           for report in .live-check/now/*/report.json; do
-            node scripts/live-check/file-issues.ts "$report" --history .live-check/history
+            node scripts/live-check/file-issues.ts "$report"
           done

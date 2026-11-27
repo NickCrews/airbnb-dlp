@@ -1,5 +1,8 @@
-# Every maintainer-only path. Code-owner review is required only for these; the
-# repair agent's pull requests touch none of them, which the path-allowlist check enforces.
+# Paths that need the maintainer's review. Most are also in
+# contract/protected-paths.json, which the path-allowlist check keeps the repair
+# agent out of. src/identity.ts and src/transport/ are not: the agent may change
+# headers, pacing and the fingerprint profile, and its pull request then waits
+# for this review instead of auto-merging.
 
 /contract/ @NickCrews
 /.github/ @NickCrews

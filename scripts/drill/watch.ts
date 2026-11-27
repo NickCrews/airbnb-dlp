@@ -34,7 +34,6 @@ const branch = arg('--branch');
 const agentLogin = process.env.AGENT_BOT_LOGIN ?? '';
 const PR_TIMEOUT_MS = 75 * 60_000;
 const CHECKS_TIMEOUT_MS = 45 * 60_000;
-const QUIET_MS = 5 * 60_000;
 const POLL_MS = 30_000;
 
 const steps: { step: string; ok: boolean; detail: string; at: string }[] = [];
@@ -131,19 +130,29 @@ async function drillAgentPath(): Promise<boolean> {
   return record('merged into the drill branch', !(merged instanceof Error), merged instanceof Error ? merged.message : `#${pull.number}`);
 }
 
-async function drillMaintainerPath(): Promise<boolean> {
+/** The agent triages the issue and answers on it, closing it or handing it to the maintainer, without a pull request. */
+async function drillNoRepairPath(): Promise<boolean> {
   const issue = await issueFor(scenario.expect);
   if (!record('issue filed', issue !== null, issue ? `#${issue.number} with category ${scenario.expect}` : `no issue with category ${scenario.expect}`)) return false;
-  const labels = labelsOf(issue);
-  if (!record('routed to the maintainer', labels.includes('needs-maintainer') && !labels.includes('agent-repair'), labels.join(', '))) return false;
-  console.log(`waiting ${QUIET_MS / 60_000} min to confirm the agent opens no pull request`);
-  await sleep(QUIET_MS);
+  if (!record('routed to the agent', labelsOf(issue).includes('agent-repair'), labelsOf(issue).join(', '))) return false;
+  console.log(`waiting up to ${PR_TIMEOUT_MS / 60_000} min for the agent to close #${issue.number} or add needs-maintainer`);
+  let answered: any = null;
+  for (const deadline = Date.now() + PR_TIMEOUT_MS; Date.now() < deadline; await sleep(POLL_MS)) {
+    const now = await github(`/issues/${issue.number}`);
+    if (now.state === 'closed' || labelsOf(now).includes('needs-maintainer')) {
+      answered = now;
+      break;
+    }
+    heartbeat(`issue #${issue.number} is ${now.state} with labels ${labelsOf(now).join(', ')} and ${now.comments} comments`);
+  }
+  const how = answered ? (answered.state === 'closed' ? 'closed the issue' : 'handed it to the maintainer') : '';
+  if (!record('agent answered on the issue', answered !== null, answered ? `${how} after ${answered.comments} comments` : `no answer within ${PR_TIMEOUT_MS / 60_000} min`)) return false;
   const pull = await repairPull(issue.number);
-  return record('agent stayed out', pull === null, pull ? `pull request #${pull.number} was opened` : `no pull request after ${QUIET_MS / 60_000} min`);
+  return record('no pull request', pull === null, pull ? `pull request #${pull.number} was opened` : 'none opened');
 }
 
-const ok = await (scenario.agent ? drillAgentPath() : drillMaintainerPath()).catch((e: Error) => record('watch', false, e.message));
+const ok = await (scenario.outcome === 'repair' ? drillAgentPath() : drillNoRepairPath()).catch((e: Error) => record('watch', false, e.message));
 const table = ['| Step | Result | Detail | At |', '|---|---|---|---|', ...steps.map((s) => `| ${s.step} | ${s.ok ? 'pass' : 'FAIL'} | ${s.detail} | ${s.at} |`)].join('\n');
 if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n### Repair\n\n${table}\n`);
-if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `repaired=${ok && scenario.agent}\n`);
+if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `repaired=${ok && scenario.outcome === 'repair'}\n`);
 process.exitCode = ok ? 0 : 1;
