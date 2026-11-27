@@ -127,7 +127,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
-        with: { node-version: 24, registry-url: 'https://registry.npmjs.org' }
+        # package.json names pnpm, which this job does not install; it installs no dependencies, so there is nothing to cache.
+        with: { node-version: 24, registry-url: 'https://registry.npmjs.org', package-manager-cache: false }
       # Trusted publishing needs npm 11.5.1 or later.
       - run: npm install -g npm@^11.5.1
       - uses: actions/download-artifact@v5
