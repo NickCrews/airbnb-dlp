@@ -4,7 +4,7 @@
  *
  * --small    the pull-request set: one area, fewer samples.
  * --history  reports from earlier runs (one JSON per run), for baselines and persistence.
- * --out      where to write report.json and, on failure, recordings.json.gz.
+ * --out      where to write report.json, log.txt and, on failure, recordings.json.gz.
  *
  * Exit code 0 when every check passes, 1 otherwise. The report names each
  * failure's category; file-issues.ts turns it into issues.
@@ -22,6 +22,13 @@ import { inBox } from '../../src/products/search.ts';
 import { safeToday, addDays } from '../../src/dates.ts';
 import { type Area, type Failure, type Report, loadContract, loadHistory, sampleEvenly } from './contract.ts';
 import { checkFillRates, fillRates } from './fill-rates.ts';
+
+/** Everything the run prints, also written to log.txt so the issue it files can quote it. */
+const logLines: string[] = [];
+function log(line = ''): void {
+  console.log(line);
+  logLines.push(line);
+}
 
 const args = process.argv.slice(2);
 const flag = (name: string) => {
@@ -63,10 +70,10 @@ function loggingTransport(inner: Transport): Transport {
     try {
       const response = await inner(request, signal);
       const note = isChallenge(response) ? ' (challenge page)' : '';
-      console.log(`    #${n} ${what} -> ${response.status}${note}, ${response.body.length} bytes, ${Date.now() - started} ms`);
+      log(`    #${n} ${what} -> ${response.status}${note}, ${response.body.length} bytes, ${Date.now() - started} ms`);
       return response;
     } catch (error) {
-      console.log(`    #${n} ${what} -> threw after ${Date.now() - started} ms: ${oneLine(String(error))}`);
+      log(`    #${n} ${what} -> threw after ${Date.now() - started} ms: ${oneLine(String(error))}`);
       throw error;
     }
   };
@@ -89,8 +96,8 @@ function remaining(): number {
 
 function fail(category: ErrorCategory, check: string, message: string, detail?: string): void {
   failures.push(detail === undefined ? { category, check, message } : { category, check, message, detail });
-  console.log(`  FAIL [${category}] ${check}: ${message}`);
-  if (detail !== undefined) console.log(`    detail: ${oneLine(detail)}`);
+  log(`  FAIL [${category}] ${check}: ${message}`);
+  if (detail !== undefined) log(`    detail: ${oneLine(detail)}`);
 }
 
 /**
@@ -113,7 +120,7 @@ const ALLOWANCE = {
 /** Runs one call within its allowance and the run's remaining budget; a block stops the whole run. */
 async function run<I, T>(name: string, allowance: number, start: (maxRequests: number) => { all(): Promise<{ items: T[]; outcome: Outcome<I> }> }): Promise<{ items: T[]; outcome: Outcome<I> } | null> {
   if (blocked) {
-    console.log(`${name}: skipped, the run is blocked`);
+    log(`${name}: skipped, the run is blocked`);
     return null;
   }
   const budget = Math.min(allowance, remaining());
@@ -121,13 +128,13 @@ async function run<I, T>(name: string, allowance: number, start: (maxRequests: n
     fail('Unknown', name, 'the run budget is spent; the live check needs fewer requests');
     return null;
   }
-  console.log(`${name}: up to ${budget} requests (${requests} of ${thresholds.requestBudget} used so far)`);
+  log(`${name}: up to ${budget} requests (${requests} of ${thresholds.requestBudget} used so far)`);
   const result = await start(budget).all();
   requests += result.outcome.requests;
   const { error, incomplete } = result.outcome;
   const ended = error ? `; ended early: ${error.category}: ${oneLine(error.message)}` : '';
   const partial = incomplete.length > 0 ? `; ${incomplete.length} incomplete (${[...new Set(incomplete.map((i) => i.error.category))].join(', ')})` : '';
-  console.log(`${name}: ${result.items.length} items from ${result.outcome.requests} requests${ended}${partial}`);
+  log(`${name}: ${result.items.length} items from ${result.outcome.requests} requests${ended}${partial}`);
   if (result.outcome.error?.category === 'Blocked') {
     blocked = result.outcome.error;
     fail('Blocked', name, 'Airbnb blocked the run', result.outcome.error.message);
@@ -332,17 +339,18 @@ const report: Report = {
 };
 mkdirSync(outDir, { recursive: true });
 writeFileSync(join(outDir, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
-if (!report.passed) writeFileSync(join(outDir, 'recordings.json.gz'), gzipSync(JSON.stringify(transport.recordings())));
-console.log('');
-console.log(`${report.passed ? 'PASSED' : 'FAILED'}: ${requests} requests; ${reported.length} failures reported`);
+log('');
+log(`${report.passed ? 'PASSED' : 'FAILED'}: ${requests} requests; ${reported.length} failures reported`);
 for (const f of reported) {
-  console.log(`  [${f.category}] ${f.check}: ${f.message}`);
-  if (f.detail !== undefined) console.log(`    detail: ${oneLine(f.detail)}`);
+  log(`  [${f.category}] ${f.check}: ${f.message}`);
+  if (f.detail !== undefined) log(`    detail: ${oneLine(f.detail)}`);
 }
 const unreported = failures.filter((f) => !reported.includes(f));
 if (unreported.length > 0) {
-  console.log(`  ${unreported.length} more failures are left out of the report, since the block explains them:`);
-  for (const f of unreported) console.log(`    [${f.category}] ${f.check}: ${f.message}`);
+  log(`  ${unreported.length} more failures are left out of the report, since the block explains them:`);
+  for (const f of unreported) log(`    [${f.category}] ${f.check}: ${f.message}`);
 }
-console.log(`Wrote ${join(outDir, 'report.json')}${report.passed ? '' : ` and ${join(outDir, 'recordings.json.gz')}`}.`);
+log(`Wrote ${join(outDir, 'report.json')}${report.passed ? '' : ` and ${join(outDir, 'recordings.json.gz')}`}.`);
+if (!report.passed) writeFileSync(join(outDir, 'recordings.json.gz'), gzipSync(JSON.stringify(transport.recordings())));
+writeFileSync(join(outDir, 'log.txt'), `${logLines.join('\n')}\n`);
 process.exitCode = report.passed ? 0 : 1;
