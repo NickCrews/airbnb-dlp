@@ -11,12 +11,14 @@ permissions:
   issues: write
   actions: read
   id-token: write
-concurrency:
-  group: agent-repair-${{ github.event.issue.number }}
-  cancel-in-progress: false
 
 jobs:
   repair:
+    # Job-level, so the events for the issue's other labels, whose jobs are
+    # skipped, never queue here and cancel the waiting agent-repair run.
+    concurrency:
+      group: agent-repair-${{ github.event.issue.number }}
+      cancel-in-progress: false
     # Only the live-check bot can start a session: it must have opened the
     # issue and applied the label. Anyone with triage rights can label.
     if: >-
@@ -83,6 +85,9 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The live-check bot opens the issue and applies the label, so it triggers
+          # every run; the job's `if` already admits no other actor.
+          allowed_bots: ${{ vars.LIVE_CHECK_BOT_LOGIN }}
           base_branch: ${{ steps.base.outputs.branch }}
           prompt: |
             Repair the live-check failure in issue #${{ github.event.issue.number }} of ${{ github.repository }}.
