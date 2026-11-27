@@ -247,7 +247,13 @@ export interface SearchListing {
 
 export interface Listing {
   id: ListingId;
-  location: (LatLng & { exact: boolean | null }) | null;
+  location: (LatLng & {
+    exact: boolean | null;
+    /** Airbnb's isVerified flag for the location. */
+    verified: boolean | null;
+    /** The text under the map, e.g. "Anchorage, Alaska, United States". */
+    subtitle: string | null;
+  }) | null;
   /** Set only when the host publishes a street address. */
   address: string | null;
   /** From Airbnb's roomType value; null if Airbnb sends one the library does not know. */

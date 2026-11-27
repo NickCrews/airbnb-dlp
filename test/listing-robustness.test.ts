@@ -26,6 +26,22 @@ describe('listing parser', () => {
     expect(baseline.photoUrls.length).toBeGreaterThan(0);
   });
 
+  it('reads the location subtitle and verified flag', () => {
+    expect(baseline.location?.subtitle).toBe('Anchorage, Alaska, United States');
+    expect(baseline.location?.verified).toBe(false);
+  });
+
+  it('takes the verified flag from the location, not from the host', () => {
+    const changed = parse(body.replace(/("verificationDetails":\{[^{}]*"isVerified":)false/, '$1true'));
+    expect(changed.location?.verified).toBe(true);
+    expect(changed.host).toEqual(baseline.host);
+  });
+
+  it('survives a renamed wrapper around the verified flag', () => {
+    const changed = parse(body.replaceAll('"verificationDetails"', '"locationVerification"'));
+    expect(changed.location).toEqual(baseline.location);
+  });
+
   it('survives a renamed exact-location flag', () => {
     const changed = parse(body.replaceAll('"isExactLocation"', '"hasExactLocation"'));
     expect(changed.location).toEqual(baseline.location);
