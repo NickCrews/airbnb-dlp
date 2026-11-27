@@ -96,4 +96,37 @@ jobs:
             - fixed: open one pull request into `${{ steps.base.outputs.branch }}` that closes the issue;
             - not reproduced: comment on the issue with what you checked, and close it;
             - cannot fix: comment on the issue with what you found and tried, and add the `needs-maintainer` label.
-          claude_args: --max-turns 80
+          # The session's own log, so a run that ends early shows what the agent
+          # tried and which tool calls were refused. The repository is public, so
+          # this log is too, like the recordings it reads; the session's GitHub
+          # token is revoked when the step ends.
+          show_full_output: true
+          # Default permission mode: only the tools listed here run, without the
+          # auto-mode safety review, which ignores allow rules for package-manager
+          # commands and refused this agent's pnpm and gh calls. The list covers
+          # what AGENTS.md asks of a session: reproduce, read recordings and
+          # airbnb.com's bundles, edit, test, record fixtures, and end with a pull
+          # request, a closing comment or a hand-over.
+          claude_args: >-
+            --max-turns 80
+            --permission-mode default
+            --allowedTools "Read,Edit,Write,Glob,Grep,WebFetch,TodoWrite,Bash(pnpm test:*),Bash(pnpm typecheck:*),Bash(pnpm lint:*),Bash(pnpm api-snapshot:*),Bash(pnpm live-check:*),Bash(pnpm record:*),Bash(node:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git branch:*),Bash(git switch:*),Bash(git checkout:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git rev-parse:*),Bash(gh run download:*),Bash(gh run view:*),Bash(gh run list:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh issue close:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(curl:*),Bash(gunzip:*),Bash(zcat:*),Bash(jq:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(grep:*),Bash(find:*),Bash(mkdir:*),Bash(wc:*)"
+      # A session must end with a pull request, a closed issue or a hand-over.
+      # One that stops without any of them, such as on refused tool calls,
+      # hands the issue to the maintainer here and fails the run.
+      - name: Check the session ended
+        if: always() && steps.limits.outputs.go == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
+          sleep 20  # pull request search lags a new pull request by a few seconds
+          pulls=$(gh pr list --state all --search "Closes #$ISSUE in:body" --json number,author --jq "[.[] | select(.author.login == \"${{ vars.AGENT_BOT_LOGIN }}\")] | length")
+          state=$(gh issue view "$ISSUE" --json state --jq .state)
+          handed=$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name] | index("needs-maintainer") != null')
+          echo "pull requests closing #$ISSUE: $pulls; issue state: $state; needs-maintainer: $handed"
+          if [ "$pulls" -gt 0 ] || [ "$state" = "CLOSED" ] || [ "$handed" = "true" ]; then exit 0; fi
+          gh issue edit "$ISSUE" --add-label needs-maintainer
+          gh issue comment "$ISSUE" --body "The repair session ended without a pull request, a closing comment or a hand-over. Its log: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          echo "::error::The repair session ended without a pull request, a closing comment or a hand-over."
+          exit 1
