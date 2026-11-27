@@ -1,5 +1,6 @@
-# Every maintainer-only path. Code-owner review is required only for these; the
-# repair agent's pull requests touch none of them, which the path-allowlist check enforces.
+# Every maintainer-only path, the same list as contract/protected-paths.json.
+# Code-owner review is required only for these; the repair agent's pull requests
+# touch none of them, which the path-allowlist check enforces.
 
 /contract/ @NickCrews
 /.github/ @NickCrews
@@ -20,10 +21,8 @@
 /tsconfig.json @NickCrews
 /tsconfig.build.json @NickCrews
 /src/classify.ts @NickCrews
-/src/identity.ts @NickCrews
 /src/scheduler.ts @NickCrews
 /src/defaults.ts @NickCrews
-/src/transport/ @NickCrews
 /src/types.ts @NickCrews
 /src/public.ts @NickCrews
 /src/errors.ts @NickCrews

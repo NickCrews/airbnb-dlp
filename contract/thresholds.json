@@ -24,7 +24,5 @@
     "nightlyPriceUsd": { "min": 10, "max": 20000 },
     "calendarMonths": 12
   },
-  "coverage": { "auditBoxes": 3, "maxMissShare": 0.05 },
-  "blockedRunsBeforeMaintainer": 2,
-  "transientHoursBeforeMaintainer": 24
+  "coverage": { "auditBoxes": 3, "maxMissShare": 0.05 }
 }

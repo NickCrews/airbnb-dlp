@@ -10,8 +10,12 @@ export interface Scenario {
   description: string;
   /** The category the live check must report. */
   expect: ErrorCategory;
-  /** Whether the repair agent should take the issue (else it goes to the maintainer). */
-  agent: boolean;
+  /**
+   * What the agent, which gets every issue, should do: `repair` opens a pull
+   * request; `no-repair` answers on the issue (closes it, or hands it to the
+   * maintainer) and opens none.
+   */
+  outcome: 'repair' | 'no-repair';
   /** Edits to the code, as exact replacements; none for a scenario simulated at the transport. */
   edits: { file: string; from: string; to: string }[];
   /** Environment for the live check. */
@@ -22,7 +26,7 @@ export const SCENARIOS: Record<string, Scenario> = {
   'stale-hash': {
     description: 'Airbnb rotated the persisted-query hash for reviews',
     expect: 'RequestRejected',
-    agent: true,
+    outcome: 'repair',
     edits: [
       {
         file: 'src/airbnb.ts',
@@ -34,7 +38,7 @@ export const SCENARIOS: Record<string, Scenario> = {
   'parser-break': {
     description: "Airbnb renamed a calendar day's date field",
     expect: 'ResponseChanged',
-    agent: true,
+    outcome: 'repair',
     edits: [
       {
         file: 'src/products/calendar.ts',
@@ -44,9 +48,11 @@ export const SCENARIOS: Record<string, Scenario> = {
     ],
   },
   blocked: {
+    // The block is simulated in the drill's live check only, so the agent's own
+    // live run does not reproduce it; nothing in the code needs fixing.
     description: 'Airbnb rate-limits the runner',
     expect: 'Blocked',
-    agent: false,
+    outcome: 'no-repair',
     edits: [],
     env: { LIVE_CHECK_SIMULATE: 'blocked' },
   },

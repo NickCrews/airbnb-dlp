@@ -14,8 +14,8 @@ describe('drill scenarios', () => {
       });
     }
   }
-  it('code scenarios go to the agent and simulated blocks to the maintainer', () => {
-    for (const s of Object.values(SCENARIOS)) expect(s.agent).toBe(s.edits.length > 0);
+  it('expects a repair exactly when the scenario breaks the code', () => {
+    for (const s of Object.values(SCENARIOS)) expect(s.outcome === 'repair').toBe(s.edits.length > 0);
   });
 });
 
