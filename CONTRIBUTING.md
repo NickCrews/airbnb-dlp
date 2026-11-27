@@ -24,7 +24,7 @@ The repair loop needs these repository settings:
 - **Live-check GitHub App** with Issues, Pull requests and Contents (read and write) permissions and no Workflows permission, installed on this repository. Drills use it to push `drill/*` branches and merge repairs into them, so the ruleset must not cover `drill/*`. Variables `LIVE_CHECK_APP_ID` and `LIVE_CHECK_BOT_LOGIN` (its `<slug>[bot]` login); secret `LIVE_CHECK_APP_PRIVATE_KEY`.
 - **Agent**: the Claude GitHub App installed, secret `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`, so runs draw on the maintainer's Claude subscription), variable `AGENT_BOT_LOGIN` (the login its pull requests are opened by), optional `AGENT_MAX_RUNS_PER_MONTH` (default 20).
 - **Ruleset on `main`**: require a pull request, code-owner review, and the status checks `checks`, `fixtures (node)`, `fixtures (bun)`, `fixtures (deno)`, `fixtures (browser)`, `path-allowlist`, `live-check (node)` and `benchmark`, each pinned to GitHub Actions. The only bypass is repository admins in pull-request mode, so the maintainer can merge their own pull requests to code-owned paths but nobody can push to `main` directly. Allow auto-merge.
-- **npm**: secret `NPM_TOKEN` for releases.
+- **npm**: trusted publishing for `release.yml`, the GitHub environment `npm`, and its secret `NPM_TOKEN` for deprecating old versions. Setup and release procedures are in [docs/release.md](docs/release.md).
 - Labels: `live-check`, `agent-repair`, `needs-maintainer` and `drill`. A failing live check opens one issue with `agent-repair`, and later failing runs comment on it only when the failing checks change; the agent adds `needs-maintainer` when it cannot fix it.
 
 ## Drills

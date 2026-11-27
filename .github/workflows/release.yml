@@ -1,47 +1,177 @@
-# A merge to main that changes the package publishes a patch release. The
-# version is the next patch after the latest published one, or package.json's
-# version when the maintainer has raised the major or minor there.
+# Publishes airbnb-dlp to npm after a merge to main that changes the package.
+# It packs the tarball once, runs the live check against that tarball
+# installed into an empty project on node, bun and deno, and publishes the same file
+# only if every runtime passes, so npm's `latest` is always a build that worked
+# against airbnb.com. A release that closes a live-check issue then deprecates
+# every earlier version. Versioning and the maintainer's procedures are in
+# docs/release.md.
 name: Release
 on:
   push:
     branches: [main]
-    paths: ['src/**', 'package.json']
+    paths: ['src/**', 'package.json', 'scripts/build.ts', 'tsconfig.build.json']
+  # Releases main's head again, e.g. after a verify run that airbnb.com blocked.
+  workflow_dispatch:
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
-  publish:
+  pack:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
-        with: { node-version: 22, cache: pnpm, registry-url: 'https://registry.npmjs.org' }
+        with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
       - name: Choose version
         id: version
         run: |
-          declared=$(node -p "require('./package.json').version")
-          published=$(npm view airbnb-dlp version 2>/dev/null || echo "")
-          next=$(node -e '
-            const [d, p] = process.argv.slice(1);
-            const parse = (v) => v.split(".").map(Number);
-            if (!p) { console.log(d); process.exit(0); }
-            const [dM, dm] = parse(d), [pM, pm, pp] = parse(p);
-            console.log(dM > pM || (dM === pM && dm > pm) ? `${dM}.${dm}.0` : `${pM}.${pm}.${pp + 1}`);
-          ' "$declared" "$published")
-          npm pkg set version="$next"
-          echo "version=$next" >> "$GITHUB_OUTPUT"
-      - run: pnpm build
-      - run: npm publish --provenance --access public
+          version=$(node scripts/release/version.ts)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing $version" >> "$GITHUB_STEP_SUMMARY"
+      # npm pack runs prepack, which builds dist/ with this version in package.json.
+      - name: Pack
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          npm pkg set version="$VERSION"
+          mkdir -p .release
+          npm pack --pack-destination .release
+          ls -l .release
+      - uses: actions/upload-artifact@v5
+        with:
+          name: package
+          path: .release/airbnb-dlp-${{ steps.version.outputs.version }}.tgz
+          if-no-files-found: error
+          retention-days: 30
+
+  verify:
+    name: verify (${{ matrix.runtime }})
+    needs: pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [node, bun, deno]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with: { node-version: 22, cache: pnpm }
+      # The live check's own code runs from this checkout; the library it checks comes from the tarball.
+      - run: pnpm install --frozen-lockfile
+      - if: matrix.runtime == 'bun'
+        uses: oven-sh/setup-bun@v2
+        with: { bun-version: 1.4.4 }
+      - if: matrix.runtime == 'deno'
+        uses: denoland/setup-deno@v2
+        with: { deno-version: 2.9.x }
+      - uses: actions/download-artifact@v5
+        with: { name: package, path: '${{ runner.temp }}/package' }
+      # Installed into an empty project, as a downstream user would, so a file missing from the tarball fails here.
+      - name: Install the tarball
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir consumer && cd consumer
+          npm init -y > /dev/null
+          npm install "$RUNNER_TEMP/package/airbnb-dlp-${{ needs.pack.outputs.version }}.tgz"
+      # Node runs the full set, as the scheduled check does, so the release notes
+      # have fill rates; a small run samples too few listings to report them.
+      - name: Live check
+        env:
+          PKG: ${{ runner.temp }}/consumer/node_modules/airbnb-dlp
+        run: |
+          case "${{ matrix.runtime }}" in
+            node) node scripts/live-check/run.ts --package "$PKG" --out .live-check/out ;;
+            bun)  bun scripts/live-check/run.ts --small --package "$PKG" --out .live-check/out ;;
+            deno) deno run -A scripts/live-check/run.ts --small --package "$PKG" --out .live-check/out ;;
+          esac
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: live-check-report-${{ matrix.runtime }}
+          path: |
+            .live-check/out/report.json
+            .live-check/out/log.txt
+          retention-days: 30
+          if-no-files-found: ignore
+      - name: Upload recorded exchanges
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: live-check-${{ matrix.runtime }}
+          path: .live-check/out/recordings.json.gz
+          retention-days: 30
+          if-no-files-found: ignore
+
+  publish:
+    needs: [pack, verify]
+    runs-on: ubuntu-latest
+    # npm's trusted publisher for airbnb-dlp names this workflow and environment.
+    environment: npm
+    permissions:
+      contents: write
+      id-token: write
+      issues: read
+      pull-requests: read
+    env:
+      VERSION: ${{ needs.pack.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v5
+        with: { node-version: 24, registry-url: 'https://registry.npmjs.org' }
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@^11.5.1
+      - uses: actions/download-artifact@v5
+        with: { name: package, path: .release }
+      # Authenticates with the workflow's OIDC identity through npm's trusted
+      # publisher for this workflow and environment; no token is involved.
+      - name: Publish
+        run: npm publish ".release/airbnb-dlp-$VERSION.tgz" --provenance --access public
+      - uses: actions/download-artifact@v5
+        with: { pattern: live-check-report-*, path: .release/reports }
+      - name: GitHub release
+        run: |
+          node scripts/release/notes.ts .release/reports > .release/notes.md
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" --notes-file .release/notes.md --generate-notes
+      # A repair means airbnb.com changed in a way every earlier version
+      # mishandles, so those versions are deprecated with a pointer to this one.
+      # The package is already published, so a failure here does not fail the release.
+      - name: Deprecate earlier versions after a repair
+        continue-on-error: true
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Tag
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "v${{ steps.version.outputs.version }}" --target "${{ github.sha }}" --generate-notes
+        run: |
+          previous=$(git tag --list 'v*' --sort=-v:refname | grep -vx "v$VERSION" | head -n1)
+          if [ -z "$previous" ]; then echo "First release: nothing to deprecate."; exit 0; fi
+          issues=$(
+            for sha in $(git rev-list "$previous..$GITHUB_SHA"); do
+              gh api "repos/$GITHUB_REPOSITORY/commits/$sha/pulls" --jq '.[].number'
+            done | sort -u | while read -r pr; do
+              gh pr view "$pr" --json closingIssuesReferences --jq '.closingIssuesReferences[].number'
+            done | sort -un | while read -r issue; do
+              gh issue view "$issue" --json number,labels \
+                --jq 'select(any(.labels[]; .name == "live-check") and all(.labels[]; .name != "drill")) | .number'
+            done
+          )
+          if [ -z "$issues" ]; then echo "No live-check issue closed since $previous: nothing to deprecate."; exit 0; fi
+          refs=$(printf '#%s ' $issues | sed 's/ $//')
+          message="airbnb.com changed and this version no longer works with it (issues $refs in $GITHUB_REPOSITORY). Upgrade to $VERSION or later."
+          echo "Deprecating airbnb-dlp@<$VERSION: $message" >> "$GITHUB_STEP_SUMMARY"
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::warning::NPM_TOKEN is not set, so earlier versions were not deprecated. Run: npm deprecate \"airbnb-dlp@<$VERSION\" \"$message\""
+            exit 1
+          fi
+          npm deprecate "airbnb-dlp@<$VERSION" "$message"

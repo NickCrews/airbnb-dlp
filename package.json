@@ -1,10 +1,17 @@
 {
   "name": "airbnb-dlp",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Airbnb listing data for any area, kept working by a scheduled live check and an agent repair loop.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NickCrews/airbnb-dlp.git"
+  },
+  "homepage": "https://github.com/NickCrews/airbnb-dlp#readme",
+  "bugs": {
+    "url": "https://github.com/NickCrews/airbnb-dlp/issues"
+  },
   "type": "module",
-  "repository": "github:NickCrews/airbnb-dlp",
   "files": [
     "dist"
   ],

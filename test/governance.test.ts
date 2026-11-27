@@ -6,7 +6,7 @@ import { loadContract, type Report } from '../scripts/live-check/contract.ts';
 
 describe('path allowlist', () => {
   const patterns = protectedPatterns();
-  it.each(['contract/thresholds.json', '.github/workflows/ci.yml', 'AGENTS.md', 'package.json', 'src/classify.ts', 'scripts/live-check/run.ts', '.github/CODEOWNERS'])(
+  it.each(['contract/thresholds.json', '.github/workflows/ci.yml', 'AGENTS.md', 'package.json', 'src/classify.ts', 'scripts/live-check/run.ts', '.github/CODEOWNERS', 'scripts/release/version.ts', 'docs/release.md'])(
     'protects %s',
     (p) => expect(isProtected(p, patterns)).toBe(true),
   );
