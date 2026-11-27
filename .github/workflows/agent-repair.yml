@@ -119,9 +119,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE: ${{ github.event.issue.number }}
+          AGENT: ${{ vars.AGENT_BOT_LOGIN }}
         run: |
-          sleep 20  # pull request search lags a new pull request by a few seconds
-          pulls=$(gh pr list --state all --search "Closes #$ISSUE in:body" --json number,author --jq "[.[] | select(.author.login == \"${{ vars.AGENT_BOT_LOGIN }}\")] | length")
+          # REST, as the drill's watcher reads it: `gh pr list` reports an App's
+          # login as app/<slug>, not <slug>[bot], and its search lags new pulls.
+          pulls=$(gh api "repos/${{ github.repository }}/pulls?state=all&sort=created&direction=desc&per_page=50" \
+            --jq "[.[] | select(.user.login == env.AGENT and ((.body // \"\") | test(\"(?i)\\\\b(close[sd]?|fix(e[sd])?|resolve[sd]?) #$ISSUE\\\\b\")))] | length")
           state=$(gh issue view "$ISSUE" --json state --jq .state)
           handed=$(gh issue view "$ISSUE" --json labels --jq '[.labels[].name] | index("needs-maintainer") != null')
           echo "pull requests closing #$ISSUE: $pulls; issue state: $state; needs-maintainer: $handed"
