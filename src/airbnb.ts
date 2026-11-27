@@ -20,6 +20,7 @@ export const OPERATIONS = {
   PdpAvailabilityCalendarV2Query: '4d4724885b57d91f65be3c50c8b792b92a0dc723a871affb6ee358a0caf6d694',
   StaysPdpBookItQuery: '9afe04ccb0e7082750ec50fb56513196422b992449bb0406c3dffcc954863b68',
   StaysPdpReviewsQuery: 'cfdc3ffbe997a618795fc5a8f9a9b484054ce9be68c8788cd2ffda999934c5ae',
+  StaysPdpSections: '498f49182b98f0b3989f4ec57edfd180ad50b0d7422b12d5c4959b67bb12f059',
 } as const;
 export type Operation = keyof typeof OPERATIONS;
 
