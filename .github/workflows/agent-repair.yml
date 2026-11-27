@@ -101,16 +101,16 @@ jobs:
           # this log is too, like the recordings it reads; the session's GitHub
           # token is revoked when the step ends.
           show_full_output: true
-          # Default permission mode: only the tools listed here run, without the
-          # auto-mode safety review, which ignores allow rules for package-manager
-          # commands and refused this agent's pnpm and gh calls. The list covers
-          # what AGENTS.md asks of a session: reproduce, read recordings and
-          # airbnb.com's bundles, edit, test, record fixtures, and end with a pull
-          # request, a closing comment or a hand-over.
+          # Default permission mode with an allow list, so no auto-mode safety
+          # review refuses calls mid-repair. The shell is allowed whole: a repair
+          # chains commands (cd, pnpm, timeout, python, jq), and a list of
+          # command prefixes refused them. The runner is the sandbox: the job's
+          # token is scoped by `permissions:`, and the session's GitHub token is
+          # revoked when the step ends.
           claude_args: >-
             --max-turns 80
             --permission-mode default
-            --allowedTools "Read,Edit,Write,Glob,Grep,WebFetch,TodoWrite,Bash(pnpm test:*),Bash(pnpm typecheck:*),Bash(pnpm lint:*),Bash(pnpm api-snapshot:*),Bash(pnpm live-check:*),Bash(pnpm benchmark:*),Bash(pnpm record:*),Bash(node:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git branch:*),Bash(git switch:*),Bash(git checkout:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git rev-parse:*),Bash(gh run download:*),Bash(gh run view:*),Bash(gh run list:*),Bash(gh run watch:*),Bash(gh workflow run benchmark.yml:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh issue close:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr list:*),Bash(curl:*),Bash(gunzip:*),Bash(zcat:*),Bash(jq:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(grep:*),Bash(find:*),Bash(mkdir:*),Bash(wc:*)"
+            --allowedTools "Read,Edit,Write,Glob,Grep,WebFetch,TodoWrite,Bash"
       # A session must end with a pull request, a closed issue or a hand-over.
       # One that stops without any of them, such as on refused tool calls,
       # hands the issue to the maintainer here and fails the run.
