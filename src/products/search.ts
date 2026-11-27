@@ -393,10 +393,12 @@ export async function runSearch(
     const processCell = async (cell: Cell) => {
       try {
         const page = await fetchPage(call, query, cell);
-        if (page.pageCount <= 1) {
-          await yieldPage(page);
-          return;
-        }
+        // Every page's listings count, including one about to be split: the
+        // pieces return some of them again, which `seen` drops. A search that
+        // runs out of budget, or runs many cells at once, still yields what it
+        // fetched.
+        await yieldPage(page);
+        if (page.pageCount <= 1) return;
         const bands = splitBand(cell.min, cell.max, page.resultCount);
         if (bands) {
           // Depth first: a split piece runs before the next seed band, so listings arrive early and a budget-limited search still returns many.
@@ -408,7 +410,6 @@ export async function runSearch(
           queue.unshift(...halves.map((box) => ({ ...cell, box })));
           return;
         }
-        await yieldPage(page);
         note(new AirbnbError('Unknown', `more than one page of results in a ${MIN_BOX_SIDE_KM} km box at a single price`));
       } catch (cause) {
         note(toAirbnbError(cause));

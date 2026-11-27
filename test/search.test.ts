@@ -86,6 +86,22 @@ describe('search', () => {
     expect(items[0]!.query).toBe(query);
   });
 
+  it('yields every fetched page under a small budget, even when its cells were split', async () => {
+    const listings = Array.from({ length: 2000 }, (_, i) => ({
+      id: String(1_000_000_000_000_000_000n + BigInt(i)),
+      lat: 30.2 + (i % 40) * 0.0025,
+      lng: -97.8 + Math.floor(i / 40) * 0.002,
+      price: 50 + (i % 300),
+    }));
+    const t = fakeTransport(fakeSearch(listings));
+    const query = { area: { bbox: { south: 30.19, north: 30.31, west: -97.81, east: -97.69 } } };
+    // The homepage, then eight cells at once: every one is over the cap and splits.
+    const { items, outcome } = await testClient(t, { limits: { concurrency: 8 } }).search([query], { maxRequests: 9 }).all();
+    expect(outcome.incomplete.map((i) => i.error.category)).toEqual(['BudgetExhausted']);
+    // Eight pages of 40; before every page counted, a search like this yielded none.
+    expect(new Set(items.map((h) => h.listing.id)).size).toBeGreaterThan(200);
+  });
+
   it('drops listings outside the query box and reports a search that cannot be split', async () => {
     const listings = Array.from({ length: 60 }, (_, i) => ({ id: String(i + 1), lat: 61.1, lng: -149.9, price: 100 }));
     listings.push({ id: '999', lat: 70, lng: -149.9, price: 100 });
