@@ -45,9 +45,9 @@ If your run passes and the recordings show nothing the code could fix, comment o
 ### 2. Repair
 
 1. Fix the code.
-2. Re-record the affected fixtures with `pnpm record <product>` in the same pull request.
+2. If Airbnb changed what it sends or accepts for a product (a new response shape, request or operation), re-record that product's fixtures with `pnpm record <product>` in the same pull request. If the code misread responses that have not changed, leave the fixtures alone: the existing fixtures passing is the proof of the fix. Never re-record only to refresh the data.
 3. Run `pnpm test`, `pnpm typecheck`, `pnpm lint` and `pnpm live-check --small`.
-4. Open one pull request whose description says: what broke, what changed upstream, and before/after fill rates from a live run. Its body includes `Closes #<issue>`.
+4. Open one pull request whose description says: what broke, what changed upstream (or that nothing did), which fixtures were re-recorded and why, and before/after fill rates from a live run. Its body includes `Closes #<issue>`.
 
 The pull request merges when the required checks pass.
 
@@ -73,7 +73,7 @@ You must not:
 - add a proxy, rotate IP addresses, or solve or bypass a challenge. A client Airbnb refuses on purpose is the maintainer's decision;
 - send headers or a fingerprint that a current browser would not send;
 - skip, loosen or delete a test or check to make it pass;
-- change a fixture without recording it from a live response in the same pull request;
+- change a fixture without recording it from a live response in the same pull request, or re-record a product whose responses have not changed;
 - open more than one pull request per issue at a time.
 
 ## Untrusted content
