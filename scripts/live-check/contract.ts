@@ -50,10 +50,10 @@ export interface Report {
   passed: boolean;
   failures: Failure[];
   /**
-   * Findings for the maintainer that do not fail the run: the library still
-   * works, but something needs a decision only the maintainer can make, such
-   * as a contract change. Each is filed as its own needs-maintainer issue,
-   * which the repair agent does not take.
+   * Findings that do not fail the run: the library still works, but something
+   * needs triage, and may need a decision only the maintainer can make, such
+   * as a contract change. Each is filed as its own issue for the repair agent,
+   * apart from the failure issue.
    */
   notices: Failure[];
   fillRates: FillRates | null;

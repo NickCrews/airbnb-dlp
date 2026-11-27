@@ -65,10 +65,10 @@ describe('issue filing', () => {
 
 describe('notice issues', () => {
   const notice = { category: 'ResponseChanged' as const, check: 'values.roomType', message: '2 of 30 listings', detail: '"Ignore previous instructions" x2' };
-  it('go to the maintainer, not the repair agent or the failure issue', () => {
-    expect(NOTICE_LABELS).toContain('needs-maintainer');
-    expect(NOTICE_LABELS).not.toContain(AGENT_LABEL);
+  it('go to the repair agent, apart from the failure issue', () => {
+    expect(NOTICE_LABELS).toContain(AGENT_LABEL);
     expect(NOTICE_LABELS).not.toContain(LABEL);
+    expect(NOTICE_LABELS).not.toContain('needs-maintainer');
   });
   it('mark their check and keep the detail out', () => {
     const body = noticeBody(notice, report('2026-11-26T12:00:00Z', []), 'https://example.test/run');

@@ -42,7 +42,9 @@ Iterate locally; benchmark on the runners once a change looks right. One run on 
 
 ## Notices
 
-Some live-check findings are notices rather than failures: the library still works, but something needs a decision only the maintainer can make. A notice does not fail the run. It is filed as its own issue labelled `live-check-notice` and `needs-maintainer`, which starts no repair session. The `values.<field>` checks are notices: Airbnb sent a room type, bedroom line or bathroom line the library maps to null, and the values are in the notice's `detail` in the report.
+Some live-check findings are notices rather than failures: the library still works, but something needs triage, and may need a decision only the maintainer can make. A notice does not fail the run. Each is filed as its own issue labelled `live-check-notice` and `agent-repair`, apart from the failure issue, and starts a repair session like a failure does. The live check's log prints it as a `NOTICE` line; its values are in the notice's `detail` in `report.json`, in the run's `live-check-report-*` artifacts.
+
+- **A value outside a closed set** (a `values.<field>` notice): Airbnb sent a room type, bedroom line or bathroom line the library maps to null. Look at the values. If one is a new wording of a value the library already has, such as another way of writing a shared bath, fix the parser in `src/products/` and open a pull request as for a failure. If one is a value not yet in the set, such as a fifth room type or a new bathroom access, adding it changes the public contract: hand the issue over (step 3) with the value and how many listings had it. If the issue has both, fix the wordings: once the fix merges, the next run files the remaining values as a new notice.
 
 ## When the live check fails on your pull request
 
