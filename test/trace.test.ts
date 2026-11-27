@@ -61,3 +61,39 @@ describe('trace', () => {
     expect(items[0]!.ok).toBe(true);
   });
 });
+
+describe('rate limits', () => {
+  const limited = (headers: Record<string, string> = {}) => ({ status: 429, headers, body: '<html>Too many requests</html>' });
+
+  it('waits out a 429, slows the client, and retries', async () => {
+    const events: TraceEvent[] = [];
+    let n = 0;
+    const t = fakeTransport(() => (n++ === 0 ? limited({ 'retry-after': '3' }) : ok(page)));
+    const { items, outcome } = await testClient(t, { trace: (e) => events.push(e) }).listings(['1']).all();
+    expect(items[0]!.ok).toBe(true);
+    expect(outcome.error).toBeNull();
+    expect(events.find((e) => e.type === 'pace')).toMatchObject({ reason: 'rate-limited', pauseMs: 3000, requestsPerSecond: 1 });
+    expect(events.find((e) => e.type === 'retry')).toMatchObject({ delayMs: 3000, category: 'Blocked' });
+  });
+
+  it('ends the call as Blocked after three rate limits on one request', async () => {
+    const t = fakeTransport(() => limited());
+    const { outcome } = await testClient(t, { limits: { concurrency: 1 } }).listings(['1', '2']).all();
+    expect(outcome.error?.category).toBe('Blocked');
+    expect(t.requests).toHaveLength(4);
+  });
+
+  it('ends the call at once when Retry-After asks for more than a minute', async () => {
+    const t = fakeTransport(() => limited({ 'retry-after': '600' }));
+    const { outcome } = await testClient(t).listings(['1']).all();
+    expect(outcome.error?.category).toBe('Blocked');
+    expect(t.requests).toHaveLength(1);
+  });
+
+  it('ends the call at once on a challenge page, whatever its status', async () => {
+    const t = fakeTransport(() => ({ status: 429, headers: {}, body: '<script src="/_sec/cp_challenge/x.js"></script>' }));
+    const { outcome } = await testClient(t).listings(['1']).all();
+    expect(outcome.error?.category).toBe('Blocked');
+    expect(t.requests).toHaveLength(1);
+  });
+});

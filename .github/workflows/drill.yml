@@ -12,7 +12,7 @@ on:
         description: What to break
         type: choice
         default: none
-        options: [none, stale-hash, parser-break, blocked]
+        options: [none, stale-hash, parser-break]
       keep_branch:
         description: Keep the drill branch and issue afterwards, for inspection
         type: boolean

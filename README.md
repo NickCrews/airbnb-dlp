@@ -90,14 +90,14 @@ One listing failing yields a typed error for that item and the rest continue. Ea
 | `BudgetExhausted` | not attempted because `maxRequests` or `maxDurationMs` was reached |
 | `Aborted` | the call's `AbortSignal` fired |
 | `RequestRejected`, `ResponseChanged` | Airbnb changed something; upgrading usually fixes it |
-| `Blocked` | Airbnb refused this client; ends the whole call |
+| `Blocked` | Airbnb refused this client, or kept rate-limiting it; ends the whole call |
 | `Unknown` | anything else |
 
 Each error carries the last HTTP exchange, bodies included, for debugging.
 
 ## Request rate
 
-One client holds one request budget, shared by all its calls: at most 1 request a second and 4 in flight by default, which stays within what Airbnb allows. You can lower these with `createClient({ limits })`, cap a call with `maxRequests` or `maxDurationMs`, or pass an `AbortSignal`, but you cannot raise the rate. It does not use proxies, rotate IP addresses or solve challenges; when Airbnb blocks requests, it reports `Blocked`.
+One client holds one request budget, shared by all its calls, and its pace adapts to Airbnb. It starts at 2 requests a second and speeds up while requests are served normally, up to 20 a second with 8 in flight. A rate limit (HTTP 429) halves the pace and pauses every request for as long as Airbnb's `Retry-After` asks, up to a minute; after three on one request, or a longer `Retry-After`, the call ends as `Blocked`. A challenge page, 403 or 428 ends the call at once. You can lower the ceilings with `createClient({ limits })`, cap a call with `maxRequests` or `maxDurationMs`, or pass an `AbortSignal`, but you cannot raise them. The `trace` option reports every change of pace. The client does not use proxies, rotate IP addresses or solve challenges.
 
 ## Runtimes
 

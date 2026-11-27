@@ -21,8 +21,13 @@ export const JSON_HEADERS: Readonly<Record<string, string>> = {
 };
 
 /**
- * The default pace. The live check runs at it, so a pace Airbnb refuses fails
- * the live check and the repair agent lowers it. Callers can only lower these.
+ * The pace. A client starts at INITIAL_REQUESTS_PER_SECOND and adapts from
+ * Airbnb's responses (src/scheduler.ts): faster while requests are served
+ * normally, half as fast on a rate limit. DEFAULT_REQUESTS_PER_SECOND and
+ * DEFAULT_CONCURRENCY are ceilings on how hard one client pushes, not
+ * estimates of Airbnb's limit; callers can only lower them. The live check and
+ * the benchmark run at these defaults.
  */
-export const DEFAULT_REQUESTS_PER_SECOND = 1;
-export const DEFAULT_CONCURRENCY = 4;
+export const INITIAL_REQUESTS_PER_SECOND = 2;
+export const DEFAULT_REQUESTS_PER_SECOND = 20;
+export const DEFAULT_CONCURRENCY = 8;
