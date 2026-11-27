@@ -56,7 +56,7 @@ for (const product of wanted) {
     // Reviews of a missing listing fail with a generic error, so there is no missing-listing fixture for them.
     if (area === 'missing' && (product === 'search' || product === 'reviews')) continue;
     const transport = recordingTransport(impitTransport());
-    const client = createClient({ transport, limits: { requestsPerSecond: 1 } });
+    const client = createClient({ transport });
     const areaIds = ids[area] ?? [];
     let inputs: unknown[];
     let outcome;
@@ -78,7 +78,7 @@ for (const product of wanted) {
     } else if (product === 'priceQuotes') {
       let cals = calendars.get(area);
       if (!cals) {
-        cals = (await createClient({ limits: { requestsPerSecond: 1 } }).calendars(areaIds, RECORD_OPTIONS.calendars).all()).items.flatMap((r) =>
+        cals = (await createClient().calendars(areaIds, RECORD_OPTIONS.calendars).all()).items.flatMap((r) =>
           r.ok ? [r.value] : [],
         );
       }

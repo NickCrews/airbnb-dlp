@@ -4,7 +4,7 @@
  * applies, so a drill never runs against code it did not break.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
-import { SCENARIOS, SCENARIO_NAMES } from './scenarios.ts';
+import { SCENARIOS, SCENARIO_NAMES, matches } from './scenarios.ts';
 
 const name = process.argv[2] ?? '';
 const scenario = SCENARIOS[name];
@@ -13,12 +13,11 @@ const root = new URL('../../', import.meta.url);
 for (const { file, from, to } of scenario.edits) {
   const path = new URL(file, root);
   const text = readFileSync(path, 'utf8');
-  const count = text.split(from).length - 1;
+  const count = matches(text, from);
   if (count !== 1) throw new Error(`scenario ${name}: expected the text once in ${file}, found it ${count} times; update scripts/drill/scenarios.ts`);
+  const before = typeof from === 'string' ? from : text.match(from)![0];
   writeFileSync(path, text.replace(from, to));
   console.log(`edited ${file}`);
-  console.log(`  - ${from}`);
+  console.log(`  - ${before}`);
   console.log(`  + ${to}`);
 }
-if (scenario.edits.length === 0) console.log(`scenario ${name} edits no code`);
-for (const [k, v] of Object.entries(scenario.env ?? {})) console.log(`the live check runs with ${k}=${v}`);

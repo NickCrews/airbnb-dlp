@@ -44,14 +44,6 @@ const areas = small ? allAreas.filter((a) => a.kind === 'rural').slice(0, 1) : a
 const perArea = small ? 4 : thresholds.sampleListingsPerArea;
 
 /**
- * LIVE_CHECK_SIMULATE=blocked answers every request with Airbnb's rate-limit
- * response, for drills of the Blocked path. Nothing else is simulated: other
- * drills break the code itself.
- */
-const simulateBlocked = process.env.LIVE_CHECK_SIMULATE === 'blocked';
-const blockedTransport: Transport = async () => ({ status: 429, headers: { server: 'nginx' }, body: '<html><title>503 Service Unavailable</title></html>' });
-
-/**
  * Error text can quote Airbnb's responses, so the log keeps it to one short
  * line; the full text is in report.json and the recordings.
  */
@@ -79,11 +71,9 @@ function loggingTransport(inner: Transport): Transport {
   };
 }
 
-const transport = recordingTransport(loggingTransport(simulateBlocked ? blockedTransport : impitTransport()));
-const client: Client = createClient({
-  transport,
-  limits: { requestsPerSecond: thresholds.requestsPerSecond },
-});
+const transport = recordingTransport(loggingTransport(impitTransport()));
+// The library's default pace, as callers get it: a pace Airbnb refuses fails the live check.
+const client: Client = createClient({ transport });
 const startedAt = new Date().toISOString();
 const today = safeToday(Date.now());
 const failures: Failure[] = [];

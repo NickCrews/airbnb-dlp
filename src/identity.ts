@@ -20,6 +20,9 @@ export const JSON_HEADERS: Readonly<Record<string, string>> = {
   'Accept-Language': LOCALE,
 };
 
-/** Airbnb allows about 130 requests a minute per IP; the default stays well under it. Callers can only lower these. */
+/**
+ * The default pace. The live check runs at it, so a pace Airbnb refuses fails
+ * the live check and the repair agent lowers it. Callers can only lower these.
+ */
 export const DEFAULT_REQUESTS_PER_SECOND = 1;
 export const DEFAULT_CONCURRENCY = 4;
