@@ -1,0 +1,6 @@
+{
+  "comment": "The benchmark runs the live check (scripts/live-check/check.ts) on each implementation it compares and measures it from the client's trace. An implementation completes when its live check passes. The bar: complete on every runner, no more refusals than the base, and at least minSpeedRatio of the base's speed. Measured settings, not guesses about Airbnb's limit.",
+  "small": true,
+  "runners": 5,
+  "minSpeedRatio": 0.9
+}

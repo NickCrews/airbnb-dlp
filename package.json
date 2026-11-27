@@ -35,6 +35,8 @@
     "record": "node scripts/record.ts",
     "prepack": "node scripts/build.ts",
     "live-check": "node scripts/live-check/run.ts",
+    "benchmark": "node scripts/benchmark/run.ts",
+    "benchmark:merge": "node scripts/benchmark/merge.ts",
     "path-check": "node scripts/path-check.ts"
   },
   "dependencies": {
