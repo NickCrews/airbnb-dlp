@@ -13,7 +13,6 @@ export interface Area {
 
 export interface Thresholds {
   requestBudget: number;
-  requestsPerSecond: number;
   sampleListingsPerArea: number;
   fetchSuccessShare: { listings: number; calendars: number; priceQuotes: number; reviews: number };
   baselineDays: number;

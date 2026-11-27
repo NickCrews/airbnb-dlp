@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { SCENARIOS } from '../scripts/drill/scenarios.ts';
+import { SCENARIOS, matches } from '../scripts/drill/scenarios.ts';
 import { drillBranchLine, parseDrillBranch } from '../scripts/live-check/file-issues.ts';
 import { isProtected, protectedPatterns } from '../scripts/path-check.ts';
 
@@ -10,12 +10,12 @@ describe('drill scenarios', () => {
     for (const edit of scenario.edits) {
       it(`${name} still applies to ${edit.file}`, () => {
         const text = readFileSync(new URL(`../${edit.file}`, import.meta.url), 'utf8');
-        expect(text.split(edit.from).length - 1).toBe(1);
+        expect(matches(text, edit.from)).toBe(1);
       });
     }
   }
-  it('expects a repair exactly when the scenario breaks the code', () => {
-    for (const s of Object.values(SCENARIOS)) expect(s.outcome === 'repair').toBe(s.edits.length > 0);
+  it('every scenario breaks the code', () => {
+    for (const s of Object.values(SCENARIOS)) expect(s.edits.length).toBeGreaterThan(0);
   });
 });
 

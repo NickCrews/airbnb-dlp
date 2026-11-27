@@ -91,9 +91,6 @@ jobs:
       - uses: actions/setup-node@v5
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
-      - name: Scenario environment
-        run: |
-          node scripts/drill/scenario-info.ts "$SCENARIO" env | tee -a "$GITHUB_ENV"
       - name: Live check on the broken branch
         run: node scripts/live-check/run.ts --small --out .live-check/out || true
       - name: Expected category reported
@@ -146,7 +143,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.app.outputs.token }}
           AGENT_BOT_LOGIN: ${{ vars.AGENT_BOT_LOGIN }}
-        run: node scripts/drill/watch.ts --scenario "$SCENARIO" --issues "${{ steps.file.outputs.issues }}" --branch "$BRANCH"
+        run: node scripts/drill/watch.ts --issues "${{ steps.file.outputs.issues }}" --branch "$BRANCH"
 
   verify:
     name: live check passes after the repair

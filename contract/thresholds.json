@@ -1,6 +1,5 @@
 {
   "requestBudget": 150,
-  "requestsPerSecond": 1,
   "sampleListingsPerArea": 8,
   "fetchSuccessShare": { "listings": 0.875, "calendars": 0.875, "priceQuotes": 0.75, "reviews": 0.875 },
   "baselineDays": 14,
