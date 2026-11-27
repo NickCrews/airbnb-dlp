@@ -31,21 +31,46 @@ const EXACT_LOCATION_KEY = /exact.*location/i;
 const LAT_KEY = /^lat(itude)?$/i;
 const LNG_KEY = /^(lng|long|longitude)$/i;
 const ADDRESS_KEY = /^exact.*address$/i;
+const SUBTITLE_KEY = /^subtitle$/i;
+const VERIFIED_KEY = /^(is)?verified$/i;
 
 function firstKey<T>(obj: Record<string, unknown>, key: RegExp, accept: (v: unknown) => v is T): T | null {
   for (const [k, v] of Object.entries(obj)) if (key.test(k) && accept(v)) return v;
   return null;
 }
 
+const isBoolean = (v: unknown): v is boolean => typeof v === 'boolean';
+
+/** The first boolean under a key like isVerified in the location object, at any depth: the host has its own isVerified elsewhere. */
+function nestedVerified(obj: Record<string, unknown>): boolean | null {
+  for (const o of objects(obj)) {
+    const verified = firstKey(o, VERIFIED_KEY, isBoolean);
+    if (verified !== null) return verified;
+  }
+  return null;
+}
+
+interface FoundLocation {
+  lat: number | null;
+  lng: number | null;
+  exact: boolean;
+  verified: boolean | null;
+  subtitle: string | null;
+  address: string | null;
+}
+
 /** The location object: the one with a boolean key like isExactLocation. */
-function findLocation(docs: unknown[]): { lat: number | null; lng: number | null; exact: boolean; address: string | null } | null {
+function findLocation(docs: unknown[]): FoundLocation | null {
   for (const obj of objects(docs)) {
-    const exact = firstKey(obj, EXACT_LOCATION_KEY, (v): v is boolean => typeof v === 'boolean');
+    const exact = firstKey(obj, EXACT_LOCATION_KEY, isBoolean);
     if (exact === null) continue;
+    const subtitle = firstKey(obj, SUBTITLE_KEY, isString)?.trim() || null;
     return {
       exact,
       lat: firstKey(obj, LAT_KEY, isNumber),
       lng: firstKey(obj, LNG_KEY, isNumber),
+      verified: nestedVerified(obj),
+      subtitle,
       address: firstKey(obj, ADDRESS_KEY, isString),
     };
   }
@@ -219,7 +244,7 @@ export function parseListing(id: ListingId, response: unknown): Listing {
 
   return {
     id,
-    location: { lat, lng, exact },
+    location: { lat, lng, exact, verified: location?.verified ?? null, subtitle: location?.subtitle ?? null },
     address: location?.address ?? null,
     roomType: roomTypeText ? (ROOM_TYPES[roomTypeText] ?? null) : null,
     propertyType: only(json, 'propertyType', (v): v is string => typeof v === 'string' && /^[A-Z][A-Z_]*$/.test(v)),

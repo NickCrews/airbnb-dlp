@@ -12,7 +12,9 @@
       "host": 0.9,
       "photoUrls": 0.9,
       "beds": 0.75,
-      "bathrooms": 0.9
+      "bathrooms": 0.9,
+      "locationSubtitle": 0.9,
+      "locationVerified": 0.9
     },
     "bathroomsWhereHotelsDominate": 0.5,
     "bedroomsOfEntireHomes": 0.9,
