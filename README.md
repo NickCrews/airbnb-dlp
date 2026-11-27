@@ -16,7 +16,7 @@ Unofficial; not affiliated with Airbnb, Inc.
 npm install airbnb-dlp
 ```
 
-Every repair of an airbnb.com change is released as a new patch version once its package has passed the live check. Depend on `^1` and keep your lockfile current (Renovate or Dependabot can merge patch updates automatically) to get repairs. See [docs/release.md](docs/release.md) for how versions are chosen.
+Every repair of an airbnb.com change is released as a new patch version once its package has passed the live check. Depend on `^1` and keep your lockfile current to get repairs. See [docs/release.md](docs/release.md) for how versions are chosen.
 
 Live fetching needs Node 22+, Bun or Deno. See [Runtimes](#runtimes) for browsers and edge runtimes.
 

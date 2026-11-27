@@ -48,7 +48,7 @@ Publishing uses npm trusted publishing: npm accepts the workflow's GitHub OIDC i
 
 ## What downstream users should do
 
-The README tells users to depend on `airbnb-dlp@^1` and to keep their lockfile current, for example with Renovate or Dependabot set to merge patch updates automatically. A lockfile pins a version, so a repair only reaches them when the lockfile is updated.
+The README tells users to depend on `airbnb-dlp@^1` and to keep their lockfile current. A lockfile pins a version, so a repair only reaches them when the lockfile is updated.
 
 ## Procedures
 
@@ -61,7 +61,6 @@ npm does not let a trusted publisher be added before the package exists, so the 
 3. **Merge** the pull request that sets `package.json` to `1.0.0`.
 4. **npm account**: `npm login`, as the account that will own the package, with two-factor authentication on.
 5. **First publish**, from the merge commit: run the tests, `npm pack`, install the tarball into an empty project, run `pnpm live-check --small --package <dir>` against it, then `npm publish <tarball> --access public`. A package published from a laptop has no provenance; every later release does.
-   npm can hold a new package's first version for review. While it does, the registry lists only a placeholder version `0.0.0-stage`, `npm view airbnb-dlp@1.0.0` answers 404, `npm stage list` is empty, and publishing `1.0.0` again fails with 409 "Cannot publish over previously staged version". The hold on airbnb-dlp's `1.0.0` cleared within an hour with no action from the maintainer. The steps below need only the package to exist, so the wizard continues during a hold and creates the GitHub release on a later run.
 6. **Tag** the merge commit `v1.0.0` with a GitHub release, so the next release is `1.0.1`.
 7. **Trusted publisher**:
    ```bash
