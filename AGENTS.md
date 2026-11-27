@@ -27,6 +27,16 @@ node test/run-fixtures.ts       # the fixture suite outside vitest (also: bun, d
 - `src/classify.ts` sorts failures into categories. `src/identity.ts` holds headers and the default request rate. `src/transport/` holds the TLS fingerprint.
 - `fixtures/<product>/<area>.json.gz` are complete recorded exchanges, written only by `pnpm record`.
 
+## When the live check fails on your pull request
+
+`live-check (node)` is a required check, so it runs against airbnb.com on every pull request. If your change caused the failure, fix it in your pull request. If it did not, such as a block (403, 428, 429 or a challenge page) or a response that changed upstream, do not dismiss it or re-run until it passes. File it for the repair agent:
+
+```bash
+gh workflow run live-check.yml -f file_from_run=<the failed run's id>
+```
+
+That files an issue through the live-check bot from the failed run's report and log, without sending anything to airbnb.com, and the repair agent takes it from there. Say on your pull request that you filed it. Re-run your own check once the repair has merged or the block has cleared.
+
 ## Repairing a failure
 
 A failing live check opens an issue, and every issue starts a repair session. The issue lists the failed checks, each with a category guessed from status codes and parse results; the guess is not a diagnosis. The issue quotes the live check's log: each stage, each request with its status, and each failure. The recorded exchanges, bodies included, are in the failing run's `live-check-*` artifact (`gh run download <run id>`).
@@ -37,7 +47,7 @@ Reproduce before changing anything: run `pnpm live-check --small`, or replay the
 
 - **Requests are refused** (a 4xx other than 403, 428 or 429). Usually a rotated persisted-query hash: find the current one in airbnb.com's JS bundles (`name:'<Operation>',type:'query',operationId:'<hash>'`) and update `OPERATIONS` in `src/airbnb.ts`. Airbnb sometimes changes an operation's variables at the same time.
 - **Responses changed**: a response parses wrongly, or a fill-rate or range check fails. Fix the parser in `src/products/`. Parsers find fields by key name and shape rather than fixed paths; keep them that way.
-- **Blocked** (403, 428, 429 or Akamai's challenge page). Find out whether the requests or the volume caused it. Compare what the library sends with what a current browser sends to airbnb.com: headers in `src/identity.ts`, the TLS fingerprint profile in `src/transport/`. If they differ, make them match. If the run went faster than Airbnb allows, lower `DEFAULT_REQUESTS_PER_SECOND` or `DEFAULT_CONCURRENCY`. If the requests already look like a current browser's and stay within Airbnb's limit, the block is Airbnb's decision about this client: hand the issue over (step 3).
+- **Blocked** (403, 428, 429 or Akamai's challenge page). Assume it is fixable: most blocks come from how fast or how bursty the requests are. Read the request timing in the log: which request was refused, what kind (an API call or an HTML page such as `/rooms/<id>`), and how many came just before it. Find out whether the requests or the volume caused it. Compare what the library sends with what a current browser sends to airbnb.com: headers in `src/identity.ts`, the TLS fingerprint profile in `src/transport/`. If they differ, make them match. If the run went faster than Airbnb allows, lower `DEFAULT_REQUESTS_PER_SECOND` or `DEFAULT_CONCURRENCY`. If the requests already look like a current browser's and stay within Airbnb's limit, the block is Airbnb's decision about this client: hand the issue over (step 3).
 - **Server or network errors** (5xx, timeouts). Check whether it persists. A 5xx on one operation while others succeed is often a malformed request, which is a repair. Failures across every operation that your own run does not reproduce are an outage: close the issue as not reproduced.
 
 If your run passes and the recordings show nothing the code could fix, comment on the issue with what you checked and close it. A failure that comes back opens a new issue.
@@ -64,7 +74,7 @@ When you cannot fix it, comment on the issue with what you found, what you tried
 
 These are enforced by repository settings and a required path-allowlist check, not only stated here.
 
-You may edit how requests are built, how responses are parsed, request headers and the TLS fingerprint profile, fixtures (by recording them), and tests other than the live check. You may raise or lower the default request rate and concurrency in `src/identity.ts`: callers' fetches should be as fast as Airbnb allows, and no faster.
+You may edit how requests are built, how responses are parsed, request headers and the TLS fingerprint profile, fixtures (by recording them), and tests other than the live check. You may raise or lower the default request rate and concurrency in `src/identity.ts`, and change how requests are spaced in `src/scheduler.ts` and retried in `src/call.ts`: callers' fetches should be as fast as Airbnb allows, and no faster.
 
 You must not:
 

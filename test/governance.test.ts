@@ -10,7 +10,7 @@ describe('path allowlist', () => {
     'protects %s',
     (p) => expect(isProtected(p, patterns)).toBe(true),
   );
-  it.each(['src/products/search.ts', 'src/airbnb.ts', 'fixtures/listings/austin-tx.json.gz', 'test/search.test.ts', 'src/products/listing.ts', 'src/identity.ts', 'src/transport/impit.ts'])(
+  it.each(['src/products/search.ts', 'src/airbnb.ts', 'fixtures/listings/austin-tx.json.gz', 'test/search.test.ts', 'src/products/listing.ts', 'src/identity.ts', 'src/transport/impit.ts', 'src/scheduler.ts'])(
     'lets the agent edit %s',
     (p) => expect(isProtected(p, patterns)).toBe(false),
   );

@@ -21,7 +21,6 @@
 /tsconfig.json @NickCrews
 /tsconfig.build.json @NickCrews
 /src/classify.ts @NickCrews
-/src/scheduler.ts @NickCrews
 /src/defaults.ts @NickCrews
 /src/types.ts @NickCrews
 /src/public.ts @NickCrews

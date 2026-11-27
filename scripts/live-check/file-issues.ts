@@ -120,7 +120,8 @@ async function main() {
   const drill = flag('--drill');
   if (drill !== undefined && parseDrillBranch(drillBranchLine(drill)) !== drill) throw new Error(`not a drill branch: ${drill}`);
   const report = JSON.parse(readFileSync(reportPath, 'utf8')) as Report;
-  const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+  // LIVE_CHECK_RUN_ID names the run the report came from when it is not this one.
+  const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.LIVE_CHECK_RUN_ID || process.env.GITHUB_RUN_ID}`;
   console.log(`${reportPath}: ${report.failures.length} failures: ${report.failures.map((f) => f.check).join(', ') || '(none)'}`);
   if (report.failures.length === 0) return;
   const logPath = join(dirname(reportPath), 'log.txt');

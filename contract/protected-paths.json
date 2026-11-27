@@ -20,7 +20,6 @@
     "tsconfig.json",
     "tsconfig.build.json",
     "src/classify.ts",
-    "src/scheduler.ts",
     "src/defaults.ts",
     "src/types.ts",
     "src/public.ts",
