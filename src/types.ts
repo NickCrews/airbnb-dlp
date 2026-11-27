@@ -54,7 +54,11 @@ export interface ClientOptions {
   random?: () => number;
   /** ISO 4217 code for every price. Default: 'USD'. */
   currency?: string;
-  /** Each value can only lower the default. */
+  /**
+   * Ceilings: each value can only lower the default. The pace adapts below
+   * the ceiling: it speeds up while Airbnb serves requests normally and halves
+   * on a rate limit.
+   */
   limits?: { requestsPerSecond?: number; concurrency?: number };
   /**
    * Receives an event for each call and each request: when it was queued and
@@ -108,7 +112,13 @@ export type TraceEvent =
       category: ErrorCategory | null;
     }
   | { type: 'request.error'; at: number; call: number; request: number; attempt: number; ms: number; category: ErrorCategory; message: string }
-  | { type: 'retry'; at: number; call: number; request: number; attempt: number; delayMs: number; category: ErrorCategory };
+  | { type: 'retry'; at: number; call: number; request: number; attempt: number; delayMs: number; category: ErrorCategory }
+  /**
+   * The client's pace changed: `faster` after healthy responses (reported in
+   * steps of 10% or more), `rate-limited` after a 429, which also holds every
+   * request back for `pauseMs`.
+   */
+  | { type: 'pace'; at: number; requestsPerSecond: number; reason: 'faster' | 'rate-limited'; pauseMs: number };
 
 /** The client method a call came from. */
 export type Product = 'search' | 'listings' | 'calendars' | 'priceQuotes' | 'reviews';

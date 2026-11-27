@@ -36,7 +36,6 @@ The **Drill** workflow (Actions, Run workflow) tests the self-healing loop witho
 | `none` | nothing: a plain full live-check run | none |
 | `stale-hash` | the reviews query's persisted-query hash | RequestRejected, repaired by the agent |
 | `parser-break` | the calendar parser's date field | ResponseChanged, repaired by the agent |
-| `blocked` | the default pace, raised to 20 requests a second with 16 in flight; the live check runs at the defaults against airbnb.com | Blocked by Airbnb's real rate limit, repaired by the agent lowering the pace |
 
 A drill commits the breakage to a new `drill/<run id>` branch, runs the live check there, and files the issue through the real path with a `drill` label. The agent repairs against the drill branch. The drill then waits for the required checks on the agent's pull request, merges it into the drill branch, and runs the live check again. The run summary has a pass or fail for each step. Afterwards the drill closes its issue and deletes its branch, unless `keep_branch` is set. Nothing touches `main` and nothing is released. Drill runs count toward the agent's monthly run limit.
 

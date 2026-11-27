@@ -45,17 +45,6 @@ export const SCENARIOS: Record<string, Scenario> = {
       },
     ],
   },
-  blocked: {
-    // Real throughput against airbnb.com, at the library's defaults, which the
-    // live check runs at: Airbnb rate-limits it, and the repair is to lower
-    // the pace again. The patterns match whatever pace a repair last set.
-    description: 'The default pace went up past what Airbnb accepts',
-    expect: 'Blocked',
-    edits: [
-      { file: 'src/identity.ts', from: /export const DEFAULT_REQUESTS_PER_SECOND = [0-9.]+;/, to: 'export const DEFAULT_REQUESTS_PER_SECOND = 20;' },
-      { file: 'src/identity.ts', from: /export const DEFAULT_CONCURRENCY = [0-9]+;/, to: 'export const DEFAULT_CONCURRENCY = 16;' },
-    ],
-  },
 };
 
 export const SCENARIO_NAMES = Object.keys(SCENARIOS);

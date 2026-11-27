@@ -5,13 +5,41 @@ interface Waiter {
   reject(reason: unknown): void;
 }
 
+/** Why the pace changed, as the trace reports it. */
+export type PaceReason = 'faster' | 'rate-limited';
+
+export interface PaceOptions {
+  /** The rate to start at. Default: the ceiling, which keeps the pace fixed until something reports back. */
+  initial?: number;
+  /** Receives each change of rate that matters: every slowdown, and speedups of 10% or more. */
+  onPace?: (rate: number, reason: PaceReason, pauseMs: number) => void;
+}
+
+/** The slowest the pace goes after rate limits, in requests a second. */
+export const MIN_REQUESTS_PER_SECOND = 0.1;
+/** Speedup per healthy response before the first rate limit: the pace finds its level quickly. */
+const SLOW_START_FACTOR = 1.1;
+/** Speedup per healthy response after a rate limit: rate += this / rate, so it creeps back up. */
+const ADDITIVE_INCREASE = 0.5;
+
 /**
- * One request budget for a client: a minimum spacing between request starts
- * and a cap on requests in flight. Slots go round-robin across the calls that
- * are waiting, so a long call cannot starve another.
+ * One request budget for a client: a spacing between request starts that
+ * adapts to Airbnb's responses, and a cap on requests in flight. Slots go
+ * round-robin across the calls that are waiting, so a long call cannot starve
+ * another.
+ *
+ * The pace works like TCP's congestion control. Each healthy response speeds
+ * it up: by 10% until the first rate limit, then by a little. A rate limit
+ * halves it, pauses every request for the server's Retry-After, and makes half
+ * the old rate the point where fast speedup stops. The pace never goes above
+ * the ceiling, which callers can only lower.
  */
 export class Scheduler {
-  private readonly interval: number;
+  private rate: number;
+  private readonly ceiling: number;
+  private slowStartUntil: number;
+  private reportedRate: number;
+  private readonly onPace: PaceOptions['onPace'];
   private readonly concurrency: number;
   private readonly queues = new Map<number, Waiter[]>();
   private ring: number[] = [];
@@ -21,10 +49,38 @@ export class Scheduler {
   private pumping = false;
   private readonly clock: Clock;
 
-  constructor(clock: Clock, requestsPerSecond: number, concurrency: number) {
+  constructor(clock: Clock, ceiling: number, concurrency: number, options: PaceOptions = {}) {
     this.clock = clock;
-    this.interval = 1000 / requestsPerSecond;
+    this.ceiling = ceiling;
+    this.rate = Math.min(options.initial ?? ceiling, ceiling);
+    this.reportedRate = this.rate;
+    this.slowStartUntil = ceiling;
+    this.onPace = options.onPace;
     this.concurrency = concurrency;
+  }
+
+  /** The current pace, in requests a second. */
+  get requestsPerSecond(): number {
+    return this.rate;
+  }
+
+  /** A response Airbnb served normally: speed up. */
+  succeeded(): void {
+    const next = this.rate < this.slowStartUntil ? this.rate * SLOW_START_FACTOR : this.rate + ADDITIVE_INCREASE / this.rate;
+    this.rate = Math.min(this.ceiling, next);
+    if (this.rate >= this.reportedRate * 1.1 || (this.rate === this.ceiling && this.reportedRate < this.ceiling)) {
+      this.reportedRate = this.rate;
+      this.onPace?.(this.rate, 'faster', 0);
+    }
+  }
+
+  /** A rate limit: halve the pace and hold every request back for `pauseMs`. */
+  rateLimited(pauseMs: number): void {
+    this.rate = Math.max(MIN_REQUESTS_PER_SECOND, this.rate / 2);
+    this.slowStartUntil = this.rate;
+    this.reportedRate = this.rate;
+    this.nextAt = Math.max(this.nextAt, this.clock.now() + pauseMs);
+    this.onPace?.(this.rate, 'rate-limited', pauseMs);
   }
 
   /** Resolves with a release function once a request may start. */
@@ -97,7 +153,7 @@ export class Scheduler {
         const waiter = this.next();
         if (!waiter) break;
         this.active++;
-        this.nextAt = Math.max(this.clock.now(), this.nextAt) + this.interval;
+        this.nextAt = Math.max(this.clock.now(), this.nextAt) + 1000 / this.rate;
         let released = false;
         waiter.resolve(() => {
           if (released) return;

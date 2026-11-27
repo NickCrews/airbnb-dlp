@@ -7,7 +7,8 @@ export function loadFixtures(): Fixture[] {
   const fixtures: Fixture[] = [];
   for (const dir of readdirSync(root)) {
     if (!statSync(new URL(dir, root)).isDirectory()) continue;
-    for (const file of readdirSync(new URL(`${dir}/`, root))) {
+    // Only fixtures: an editor's or OS's stray files (.DS_Store) are not one.
+    for (const file of readdirSync(new URL(`${dir}/`, root)).filter((f) => f.endsWith('.json.gz'))) {
       fixtures.push(JSON.parse(gunzipSync(readFileSync(new URL(`${dir}/${file}`, root))).toString()));
     }
   }

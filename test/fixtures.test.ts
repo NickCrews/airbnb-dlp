@@ -5,7 +5,7 @@ import { type Fixture, replayFixture } from './fixture-suite.ts';
 
 const root = new URL('../fixtures/', import.meta.url);
 const files = readdirSync(root).flatMap((dir) =>
-  statSync(new URL(dir, root)).isDirectory() ? readdirSync(new URL(`${dir}/`, root)).map((f) => `${dir}/${f}`) : [],
+  statSync(new URL(dir, root)).isDirectory() ? readdirSync(new URL(`${dir}/`, root)).filter((f) => f.endsWith('.json.gz')).map((f) => `${dir}/${f}`) : [],
 );
 
 describe('fixtures', () => {

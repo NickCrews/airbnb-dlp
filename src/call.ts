@@ -1,4 +1,4 @@
-import { classifyResponse, classifyThrown } from './classify.ts';
+import { classifyResponse, classifyThrown, header, isChallenge } from './classify.ts';
 import { AirbnbError, BlockedError, type ErrorCategory, type Exchange, MAX_EXCHANGE_BODY, makeError } from './errors.ts';
 import { MarkerMissingError, ShapeError } from './parse-errors.ts';
 import type { Scheduler } from './scheduler.ts';
@@ -33,6 +33,25 @@ export interface ClientContext {
 export const REQUEST_TIMEOUT_MS = 30_000;
 export const MAX_RETRIES = 3;
 export const RETRY_BASE_MS = 2_000;
+/** Rate limits (a plain 429) one request waits out, slowing the whole client each time, before the call ends as Blocked. */
+export const MAX_RATE_LIMIT_RETRIES = 3;
+/** The longest Retry-After the client waits out; a longer one ends the call as Blocked. */
+export const MAX_RATE_LIMIT_PAUSE_MS = 60_000;
+
+/**
+ * How long a 429 asks the client to wait: its Retry-After, in seconds or as
+ * a date, or a backoff that doubles with each limit on the same request.
+ */
+export function rateLimitPause(response: TransportResponse, limitsSoFar: number, now: number): number {
+  const value = header(response.headers, 'retry-after');
+  if (value !== undefined) {
+    const seconds = Number(value);
+    if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+    const date = Date.parse(value);
+    if (Number.isFinite(date)) return Math.max(0, date - now);
+  }
+  return RETRY_BASE_MS * 2 ** limitsSoFar;
+}
 /** Items a batch holds unread before it pauses new requests. */
 export const BUFFER_SIZE = 16;
 
@@ -148,6 +167,7 @@ export class Call {
   async fetch(request: TransportRequest, accept: readonly number[] = []): Promise<FetchResult> {
     const { clock, trace } = this.ctx;
     const id = this.ctx.nextRequestId();
+    let rateLimits = 0;
     for (let attempt = 0; ; attempt++) {
       this.checkBudget();
       await this.gate();
@@ -186,7 +206,22 @@ export class Call {
       const category = accepted ? null : classifyResponse(response);
       trace({ type: 'response', at, call: this.id, request: id, attempt, status: response.status, bytes: response.body.length, ms: at - sent, category });
       const exchange = captureExchange(request, response);
-      if (category === null) return { response, exchange };
+      if (category === null) {
+        this.ctx.scheduler.succeeded();
+        return { response, exchange };
+      }
+      // A plain 429 says "too fast": slow the whole client, wait, and try again.
+      // A challenge page, a 403 or a 428 is a block, and ends the call at once.
+      if (response.status === 429 && !isChallenge(response) && rateLimits < MAX_RATE_LIMIT_RETRIES) {
+        const pauseMs = rateLimitPause(response, rateLimits, clock.now());
+        if (pauseMs <= MAX_RATE_LIMIT_PAUSE_MS) {
+          rateLimits++;
+          this.ctx.scheduler.rateLimited(pauseMs);
+          // The scheduler holds this request, and every other, until the pause is over.
+          trace({ type: 'retry', at: clock.now(), call: this.id, request: id, attempt, delayMs: pauseMs, category });
+          continue;
+        }
+      }
       if (category === 'Blocked') {
         const error = new BlockedError(`blocked: HTTP ${response.status} from ${request.url}`, { exchange });
         this.stop(error);

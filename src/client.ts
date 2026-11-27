@@ -2,7 +2,7 @@ import type { ClientContext } from './call.ts';
 import { startBatch, startResultBatch } from './call.ts';
 import { Scheduler } from './scheduler.ts';
 import { systemClock, systemRandom } from './defaults.ts';
-import { DEFAULT_CONCURRENCY, DEFAULT_REQUESTS_PER_SECOND } from './identity.ts';
+import { DEFAULT_CONCURRENCY, DEFAULT_REQUESTS_PER_SECOND, INITIAL_REQUESTS_PER_SECOND } from './identity.ts';
 import { DEFAULT_MONTHS, fetchCalendar } from './products/calendar.ts';
 import { fetchListing } from './products/listing.ts';
 import { fetchPriceQuote } from './products/priceQuote.ts';
@@ -30,24 +30,29 @@ export function makeCreateClient(defaultTransport: (() => Transport) | null) {
     let callIds = 0;
     let requestIds = 0;
     const trace = options.trace;
+    const safeTrace: ClientContext['trace'] = trace
+      ? (event) => {
+          try {
+            trace(event);
+          } catch {
+            // A tracer's failure must not change what the call does.
+          }
+        }
+      : () => {};
+    const scheduler = new Scheduler(clock, rps, concurrency, {
+      initial: INITIAL_REQUESTS_PER_SECOND,
+      onPace: (requestsPerSecond, reason, pauseMs) => safeTrace({ type: 'pace', at: clock.now(), requestsPerSecond, reason, pauseMs }),
+    });
     const ctx: ClientContext = {
       transport,
       clock,
       random: options.random ?? systemRandom,
-      scheduler: new Scheduler(clock, rps, concurrency),
+      scheduler,
       currency: options.currency ?? 'USD',
       concurrency,
       nextCallId: () => ++callIds,
       nextRequestId: () => ++requestIds,
-      trace: trace
-        ? (event) => {
-            try {
-              trace(event);
-            } catch {
-              // A tracer's failure must not change what the call does.
-            }
-          }
-        : () => {},
+      trace: safeTrace,
       apiKey: { value: null, pending: null },
     };
     return {
