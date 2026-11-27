@@ -230,7 +230,6 @@ export interface SearchHit {
 export interface SearchListing {
   id: ListingId;
   name: string | null;
-  title: string | null;
   /** Jittered unless the host shows the exact location; see Listing.location.exact. */
   location: LatLng | null;
   rating: number | null;

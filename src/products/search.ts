@@ -280,7 +280,6 @@ export function parseSearchListing(result: unknown, currency: string): SearchLis
   return {
     id,
     name: asString(dig(r, 'demandStayListing.description.name.localizedStringWithTranslationPreference')),
-    title: asString(r['title']),
     location: lat !== null && lng !== null ? { lat, lng } : null,
     rating,
     reviewCount,

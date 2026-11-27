@@ -1,6 +1,6 @@
 {
   "name": "airbnb-dlp",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Airbnb listing data for any area, kept working by a scheduled live check and an agent repair loop.",
   "license": "MIT",
   "repository": {

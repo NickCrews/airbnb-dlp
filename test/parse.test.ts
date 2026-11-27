@@ -50,7 +50,6 @@ describe('search card', () => {
   const card = {
     __typename: 'StaySearchResult',
     avgRatingLocalized: '4.96 (1,050)',
-    title: 'Home in Anchorage',
     badges: [{ loggingContext: { badgeType: 'GUEST_FAVORITE' } }],
     demandStayListing: {
       id: 'RGVtYW5kU3RheUxpc3Rpbmc6MTYwMjUwNzIyODM1NzA3NTU3OA==',
@@ -66,7 +65,6 @@ describe('search card', () => {
     expect(parseSearchListing(card, 'USD')).toEqual({
       id: '1602507228357075578',
       name: 'Cozy cabin',
-      title: 'Home in Anchorage',
       location: { lat: 61.2, lng: -149.9 },
       rating: 4.96,
       reviewCount: 1050,
