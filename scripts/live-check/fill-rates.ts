@@ -18,6 +18,8 @@ const FIELDS: Record<string, (l: Listing) => boolean> = {
   beds: (l) => l.beds !== null,
   bathrooms: (l) => l.bathrooms?.count != null,
   propertyType: (l) => l.propertyType !== null,
+  locationSubtitle: (l) => l.location?.subtitle != null,
+  locationVerified: (l) => l.location?.verified != null,
 };
 
 export function fillRates(listings: Listing[], areas: Area[], sampled: Map<Area, string[]>): FillRates {
@@ -53,10 +55,14 @@ export function checkFillRates(rates: FillRates, history: Report[], t: Threshold
       if (rate < min || rate > max) failures.push({ category: 'ResponseChanged', check: `fill.${field}`, message: `exact-location share ${rate.toFixed(2)} outside ${min}-${max}` });
       continue;
     }
+    // A field with no baseline values yet, such as a newly added one, keeps its starting threshold.
+    const values = useBaseline
+      ? past.map((r) => r.fillRates?.[field]).filter((v): v is number => typeof v === 'number' && !Number.isNaN(v))
+      : [];
+    const fromBaseline = values.length > 0;
     let floor: number | undefined;
-    if (useBaseline) {
-      const values = past.map((r) => r.fillRates![field]).filter((v): v is number => typeof v === 'number' && !Number.isNaN(v));
-      if (values.length > 0) floor = values.reduce((a, b) => a + b, 0) / values.length - t.baselineTolerance;
+    if (fromBaseline) {
+      floor = values.reduce((a, b) => a + b, 0) / values.length - t.baselineTolerance;
     } else if (field in t.starting.listingFields) {
       floor = t.starting.listingFields[field];
     } else if (field === 'bedroomsOfEntireHomes') {
@@ -66,7 +72,7 @@ export function checkFillRates(rates: FillRates, history: Report[], t: Threshold
       failures.push({
         category: 'ResponseChanged',
         check: `fill.${field}`,
-        message: `fill rate ${rate.toFixed(2)} is below ${floor.toFixed(2)} (${useBaseline ? `${t.baselineDays}-day baseline` : 'starting threshold'})`,
+        message: `fill rate ${rate.toFixed(2)} is below ${floor.toFixed(2)} (${fromBaseline ? `${t.baselineDays}-day baseline` : 'starting threshold'})`,
       });
     }
   }

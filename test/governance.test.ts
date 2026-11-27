@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isProtected, protectedPatterns } from '../scripts/path-check.ts';
 import { AGENT_LABEL, LABEL, NOTICE_LABELS, checksMarker, describe as describeFailure, issueBody, issueLabels, logExcerpt, noticeBody, noticeMarker } from '../scripts/live-check/file-issues.ts';
-import { checkFillRates } from '../scripts/live-check/fill-rates.ts';
+import { checkFillRates, fillRates } from '../scripts/live-check/fill-rates.ts';
 import { checkClosedSets } from '../scripts/live-check/closed-sets.ts';
 import type { Listing } from '../src/types.ts';
 import { loadContract, type Report } from '../scripts/live-check/contract.ts';
@@ -89,6 +89,27 @@ describe('fill rates', () => {
     const past = Array.from({ length: 6 }, (_, i) => ({ ...report(new Date(now - i * 4 * 3_600_000).toISOString(), []), fillRates: { beds: 0.6 } }));
     expect(checkFillRates({ beds: 0.5 }, past, thresholds, now)).toEqual([]);
     expect(checkFillRates({ beds: 0.3 }, past, thresholds, now)).toHaveLength(1);
+  });
+  it('keeps the starting threshold for a field the baseline has no values for', () => {
+    const now = Date.parse('2026-11-26T12:00:00Z');
+    const past = Array.from({ length: 6 }, (_, i) => ({ ...report(new Date(now - i * 4 * 3_600_000).toISOString(), []), fillRates: { beds: 0.6 } }));
+    const failures = checkFillRates({ beds: 0.6, locationSubtitle: 0.5, locationVerified: 0.95 }, past, thresholds, now);
+    expect(failures.map((f) => f.check)).toEqual(['fill.locationSubtitle']);
+    expect(failures[0]!.message).toContain('starting threshold');
+  });
+  it('counts the location subtitle and verified flag', () => {
+    const listing = (subtitle: string | null, verified: boolean | null) =>
+      ({ id: '1', location: { lat: 0, lng: 0, exact: false, subtitle, verified }, photoUrls: [] }) as unknown as Listing;
+    const listings = [
+      listing('Hilo, Hawaii, United States', true),
+      listing(null, false),
+      listing('Austin, Texas, United States', null),
+      listing('Alpine, Texas, United States', true),
+      listing('Terlingua, Texas, United States', false),
+    ];
+    const rates = fillRates(listings, [], new Map());
+    expect(rates['locationSubtitle']).toBe(0.8);
+    expect(rates['locationVerified']).toBe(0.8);
   });
 });
 
