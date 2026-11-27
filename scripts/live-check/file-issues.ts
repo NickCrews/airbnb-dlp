@@ -119,6 +119,9 @@ async function main() {
   const report = JSON.parse(readFileSync(reportPath, 'utf8')) as Report;
   const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
   const categories = drill ? [...new Set(report.failures.map((f) => f.category))] : categoriesToFile(report, history, Date.now());
+  const failed = [...new Set(report.failures.map((f) => f.category))];
+  console.log(`${reportPath}: ${report.failures.length} failures in categories ${failed.join(', ') || '(none)'}; ${history.length} earlier reports`);
+  for (const c of failed.filter((c) => !categories.includes(c))) console.log(`not filing ${c} yet: it has not persisted long enough`);
   const opened: number[] = [];
   for (const category of categories) {
     const categoryLabel = `category:${category}`;
@@ -128,7 +131,7 @@ async function main() {
       const existing = open.find((i) => !i.labels.some((l) => l.name === DRILL_LABEL));
       if (existing) {
         await github(`/issues/${existing.number}/comments`, { method: 'POST', body: JSON.stringify({ body }) });
-        console.log(`commented on #${existing.number} (${category})`);
+        console.log(`commented on #${existing.number} (${category}): it is already open`);
         continue;
       }
     }
@@ -138,7 +141,7 @@ async function main() {
       body: JSON.stringify({ title: `Live check: ${category}`, body, labels }),
     });
     opened.push(issue.number);
-    console.log(`opened #${issue.number} (${category})`);
+    console.log(`opened ${issue.html_url} (${category}) with labels ${labels.join(', ')}`);
   }
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `issues=${opened.join(',')}\n`);
 }

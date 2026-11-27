@@ -91,15 +91,17 @@ jobs:
       - uses: actions/setup-node@v5
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
-      - name: Live check on the broken branch
+      - name: Scenario environment
         run: |
-          node scripts/drill/scenario-info.ts "$SCENARIO" env >> "$GITHUB_ENV"
-      - run: node scripts/live-check/run.ts --small --out .live-check/out || true
+          node scripts/drill/scenario-info.ts "$SCENARIO" env | tee -a "$GITHUB_ENV"
+      - name: Live check on the broken branch
+        run: node scripts/live-check/run.ts --small --out .live-check/out || true
       - name: Expected category reported
         id: verdict
         run: |
           expected=$(node scripts/drill/scenario-info.ts "$SCENARIO" expect)
           found=$(node -e 'const r=require("./.live-check/out/report.json"); console.log(r.failures.map(f=>f.category).join(" "))')
+          echo "expected $expected; the live check reported: ${found:-nothing}"
           printf '### Detection\n\n| Step | Result | Detail |\n|---|---|---|\n' >> "$GITHUB_STEP_SUMMARY"
           if echo " $found " | grep -q " $expected "; then
             echo "detected=true" >> "$GITHUB_OUTPUT"
@@ -109,8 +111,10 @@ jobs:
             echo "| live check finds it | FAIL | expected $expected, reported: ${found:-nothing} |" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
-      - uses: actions/upload-artifact@v5
-        with: { name: drill-detect, path: .live-check/out/report.json }
+      # Uploaded on failure too: the report and the recorded exchanges are what explain a missed detection.
+      - if: always()
+        uses: actions/upload-artifact@v5
+        with: { name: drill-detect, path: .live-check/out/, if-no-files-found: ignore }
 
   repair:
     name: issue, agent, checks, merge

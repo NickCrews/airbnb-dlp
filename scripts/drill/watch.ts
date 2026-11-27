@@ -61,6 +61,14 @@ async function github(path: string, init: RequestInit = {}): Promise<any> {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Prints what a wait loop sees at most every 5 minutes, so a long wait shows progress in the log. */
+let lastHeartbeat = 0;
+function heartbeat(message: string): void {
+  if (Date.now() - lastHeartbeat < 5 * 60_000) return;
+  lastHeartbeat = Date.now();
+  console.log(`[${((Date.now() - started) / 60_000).toFixed(1)} min] ${message}`);
+}
 const labelsOf = (issue: any): string[] => issue.labels.map((l: any) => (typeof l === 'string' ? l : l.name));
 
 async function issueFor(category: string): Promise<any | null> {
@@ -88,7 +96,10 @@ async function checksVerdict(pull: any): Promise<{ ok: boolean; detail: string }
     else if (run.conclusion !== 'success') failed.push(`${name} (${run.conclusion})`);
   }
   if (failed.length > 0) return { ok: false, detail: `failed: ${failed.join(', ')}` };
-  if (missing.length > 0) return null;
+  if (missing.length > 0) {
+    heartbeat(`checks on ${fresh.head.sha.slice(0, 7)}: waiting for ${missing.join(', ')}`);
+    return null;
+  }
   return { ok: true, detail: `all ${REQUIRED_CHECKS.length} required checks passed on ${fresh.head.sha.slice(0, 7)}` };
 }
 
@@ -96,6 +107,7 @@ async function drillAgentPath(): Promise<boolean> {
   const issue = await issueFor(scenario.expect);
   if (!record('issue filed', issue !== null, issue ? `#${issue.number} with category ${scenario.expect}` : `no issue with category ${scenario.expect} among #${issues.join(', #')}`)) return false;
   if (!record('routed to the agent', labelsOf(issue).includes('agent-repair'), labelsOf(issue).join(', '))) return false;
+  console.log(`waiting up to ${PR_TIMEOUT_MS / 60_000} min for a pull request by ${agentLogin || '(AGENT_BOT_LOGIN unset)'} into ${branch} that closes #${issue.number}`);
 
   let pull: any = null;
   for (const deadline = Date.now() + PR_TIMEOUT_MS; Date.now() < deadline; await sleep(POLL_MS)) {
@@ -103,8 +115,11 @@ async function drillAgentPath(): Promise<boolean> {
     if (pull) break;
     const now = await github(`/issues/${issue.number}`);
     if (labelsOf(now).includes('needs-maintainer')) return record('agent opened a pull request', false, 'the issue was handed to the maintainer instead');
+    heartbeat(`no pull request yet; issue #${issue.number} is ${now.state} with labels ${labelsOf(now).join(', ')} and ${now.comments} comments`);
   }
   if (!record('agent opened a pull request', pull !== null, pull ? `#${pull.number} into ${branch}` : `none within ${PR_TIMEOUT_MS / 60_000} min`)) return false;
+  console.log(`waiting up to ${CHECKS_TIMEOUT_MS / 60_000} min for ${REQUIRED_CHECKS.join(', ')} on ${pull.html_url}`);
+  lastHeartbeat = 0;
 
   let verdict: { ok: boolean; detail: string } | null = null;
   for (const deadline = Date.now() + CHECKS_TIMEOUT_MS; Date.now() < deadline && !verdict; await sleep(POLL_MS)) {
@@ -121,6 +136,7 @@ async function drillMaintainerPath(): Promise<boolean> {
   if (!record('issue filed', issue !== null, issue ? `#${issue.number} with category ${scenario.expect}` : `no issue with category ${scenario.expect}`)) return false;
   const labels = labelsOf(issue);
   if (!record('routed to the maintainer', labels.includes('needs-maintainer') && !labels.includes('agent-repair'), labels.join(', '))) return false;
+  console.log(`waiting ${QUIET_MS / 60_000} min to confirm the agent opens no pull request`);
   await sleep(QUIET_MS);
   const pull = await repairPull(issue.number);
   return record('agent stayed out', pull === null, pull ? `pull request #${pull.number} was opened` : `no pull request after ${QUIET_MS / 60_000} min`);

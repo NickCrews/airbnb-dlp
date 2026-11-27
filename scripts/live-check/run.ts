@@ -13,6 +13,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { bookableStays, createClient } from '../../src/entry-native.ts';
+import { isChallenge } from '../../src/classify.ts';
 import type { AirbnbError, ErrorCategory } from '../../src/errors.ts';
 import { recordingTransport } from '../../src/testing/index.ts';
 import { impitTransport } from '../../src/transport/impit.ts';
@@ -42,7 +43,36 @@ const perArea = small ? 4 : thresholds.sampleListingsPerArea;
  */
 const simulateBlocked = process.env.LIVE_CHECK_SIMULATE === 'blocked';
 const blockedTransport: Transport = async () => ({ status: 429, headers: { server: 'nginx' }, body: '<html><title>503 Service Unavailable</title></html>' });
-const transport = recordingTransport(simulateBlocked ? blockedTransport : impitTransport());
+
+/**
+ * Error text can quote Airbnb's responses, so the log keeps it to one short
+ * line; the full text is in report.json and the recordings.
+ */
+function oneLine(text: string, max = 300): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+}
+
+/** Logs every exchange: operation, status, size and time, so a failed run shows where it went wrong. */
+let exchanges = 0;
+function loggingTransport(inner: Transport): Transport {
+  return async (request, signal) => {
+    const n = ++exchanges;
+    const started = Date.now();
+    const what = `${request.method} ${new URL(request.url).pathname}`;
+    try {
+      const response = await inner(request, signal);
+      const note = isChallenge(response) ? ' (challenge page)' : '';
+      console.log(`    #${n} ${what} -> ${response.status}${note}, ${response.body.length} bytes, ${Date.now() - started} ms`);
+      return response;
+    } catch (error) {
+      console.log(`    #${n} ${what} -> threw after ${Date.now() - started} ms: ${oneLine(String(error))}`);
+      throw error;
+    }
+  };
+}
+
+const transport = recordingTransport(loggingTransport(simulateBlocked ? blockedTransport : impitTransport()));
 const client: Client = createClient({
   transport,
   limits: { requestsPerSecond: thresholds.requestsPerSecond },
@@ -59,6 +89,8 @@ function remaining(): number {
 
 function fail(category: ErrorCategory, check: string, message: string, detail?: string): void {
   failures.push(detail === undefined ? { category, check, message } : { category, check, message, detail });
+  console.log(`  FAIL [${category}] ${check}: ${message}`);
+  if (detail !== undefined) console.log(`    detail: ${oneLine(detail)}`);
 }
 
 /**
@@ -80,14 +112,22 @@ const ALLOWANCE = {
 
 /** Runs one call within its allowance and the run's remaining budget; a block stops the whole run. */
 async function run<I, T>(name: string, allowance: number, start: (maxRequests: number) => { all(): Promise<{ items: T[]; outcome: Outcome<I> }> }): Promise<{ items: T[]; outcome: Outcome<I> } | null> {
-  if (blocked) return null;
+  if (blocked) {
+    console.log(`${name}: skipped, the run is blocked`);
+    return null;
+  }
   const budget = Math.min(allowance, remaining());
   if (budget <= 0) {
     fail('Unknown', name, 'the run budget is spent; the live check needs fewer requests');
     return null;
   }
+  console.log(`${name}: up to ${budget} requests (${requests} of ${thresholds.requestBudget} used so far)`);
   const result = await start(budget).all();
   requests += result.outcome.requests;
+  const { error, incomplete } = result.outcome;
+  const ended = error ? `; ended early: ${error.category}: ${oneLine(error.message)}` : '';
+  const partial = incomplete.length > 0 ? `; ${incomplete.length} incomplete (${[...new Set(incomplete.map((i) => i.error.category))].join(', ')})` : '';
+  console.log(`${name}: ${result.items.length} items from ${result.outcome.requests} requests${ended}${partial}`);
   if (result.outcome.error?.category === 'Blocked') {
     blocked = result.outcome.error;
     fail('Blocked', name, 'Airbnb blocked the run', result.outcome.error.message);
@@ -293,6 +333,16 @@ const report: Report = {
 mkdirSync(outDir, { recursive: true });
 writeFileSync(join(outDir, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
 if (!report.passed) writeFileSync(join(outDir, 'recordings.json.gz'), gzipSync(JSON.stringify(transport.recordings())));
-console.log(`${requests} requests; ${reported.length} failures`);
-for (const f of reported) console.log(`  [${f.category}] ${f.check}: ${f.message}`);
+console.log('');
+console.log(`${report.passed ? 'PASSED' : 'FAILED'}: ${requests} requests; ${reported.length} failures reported`);
+for (const f of reported) {
+  console.log(`  [${f.category}] ${f.check}: ${f.message}`);
+  if (f.detail !== undefined) console.log(`    detail: ${oneLine(f.detail)}`);
+}
+const unreported = failures.filter((f) => !reported.includes(f));
+if (unreported.length > 0) {
+  console.log(`  ${unreported.length} more failures are left out of the report, since the block explains them:`);
+  for (const f of unreported) console.log(`    [${f.category}] ${f.check}: ${f.message}`);
+}
+console.log(`Wrote ${join(outDir, 'report.json')}${report.passed ? '' : ` and ${join(outDir, 'recordings.json.gz')}`}.`);
 process.exitCode = report.passed ? 0 : 1;
