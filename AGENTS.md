@@ -40,6 +40,12 @@ Iterate locally; benchmark on the runners once a change looks right. One run on 
 - `src/classify.ts` sorts failures into categories. `src/identity.ts` holds headers and the default request rate. `src/transport/` holds the TLS fingerprint.
 - `fixtures/<product>/<area>.json.gz` are complete recorded exchanges, written only by `pnpm record`.
 
+## Notices
+
+Some live-check findings are notices rather than failures: the library still works, but something needs triage, and may need a decision only the maintainer can make. A notice does not fail the run. Each is filed as its own issue labelled `live-check-notice` and `agent-repair`, apart from the failure issue, and starts a repair session like a failure does. The live check's log prints it as a `NOTICE` line; its values are in the notice's `detail` in `report.json`, in the run's `live-check-report-*` artifacts.
+
+- **A value outside a closed set** (a `values.<field>` notice): Airbnb sent a room type, bedroom line or bathroom line the library maps to null. Look at the values. If one is a new wording of a value the library already has, such as another way of writing a shared bath, fix the parser in `src/products/` and open a pull request as for a failure. If one is a value not yet in the set, such as a fifth room type or a new bathroom access, adding it changes the public contract: hand the issue over (step 3) with the value and how many listings had it. If the issue has both, fix the wordings: once the fix merges, the next run files the remaining values as a new notice.
+
 ## When the live check fails on your pull request
 
 `live-check (node)` is a required check, so it runs against airbnb.com on every pull request. If your change caused the failure, fix it in your pull request. If it did not, such as a block (403, 428, 429 or a challenge page) or a response that changed upstream, do not dismiss it or re-run until it passes. File it for the repair agent:

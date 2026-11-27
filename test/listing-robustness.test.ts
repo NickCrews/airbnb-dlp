@@ -22,9 +22,16 @@ describe('listing parser', () => {
   it('reads every field from the recorded response', () => {
     expect(baseline.location).not.toBeNull();
     expect(baseline.roomType).not.toBeNull();
+    expect(baseline.roomTypeText).not.toBeNull();
     expect(baseline.guestCapacity).not.toBeNull();
     expect(baseline.host?.timeAsHost).not.toBeNull();
     expect(baseline.photoUrls.length).toBeGreaterThan(0);
+  });
+
+  it('keeps a room type it does not recognise as text', () => {
+    const changed = parse(body.replaceAll(`"roomType":${JSON.stringify(baseline.roomTypeText)}`, '"roomType":"Treehouse room"'));
+    expect(changed.roomType).toBeNull();
+    expect(changed.roomTypeText).toBe('Treehouse room');
   });
 
   it('reads the location subtitle and verified flag', () => {

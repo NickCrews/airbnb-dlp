@@ -26,6 +26,8 @@ export interface Thresholds {
   };
   ranges: { nightlyPriceUsd: { min: number; max: number }; calendarMonths: number };
   coverage: { auditBoxes: number; maxMissShare: number };
+  /** Sampled listings allowed per field whose Airbnb value the library maps to null. */
+  maxUnrecognisedValues: number;
 }
 
 export interface Failure {
@@ -47,6 +49,13 @@ export interface Report {
   requests: number;
   passed: boolean;
   failures: Failure[];
+  /**
+   * Findings that do not fail the run: the library still works, but something
+   * needs triage, and may need a decision only the maintainer can make, such
+   * as a contract change. Each is filed as its own issue for the repair agent,
+   * apart from the failure issue.
+   */
+  notices: Failure[];
   fillRates: FillRates | null;
 }
 
