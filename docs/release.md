@@ -16,7 +16,7 @@ Versions follow [SemVer](https://semver.org) and describe the public contract in
 
 The repair agent cannot edit `contract/` or `package.json`, so its changes are patches by construction.
 
-A version does not say whether it works against airbnb.com today. When Airbnb changes its site, every earlier version breaks at once, and the release that repairs it deprecates them (see [Deprecation](#deprecation)).
+A version does not say whether it works against airbnb.com today. When Airbnb changes its site, every earlier version breaks at once; the release that repairs it is the newest version, so upgrading to `latest` is the fix. Earlier versions are not deprecated: `npm deprecate` needs a person with two-factor authentication or a long-lived token, and this setup has neither in CI.
 
 ### How the version is chosen
 
@@ -40,30 +40,15 @@ The workflow runs on a push to `main` that changes `src/**`, `package.json`, `sc
 2. **verify**, once each on node, bun and deno: installs the tarball into an empty project, as a user would, and runs the live check against that installed package (`scripts/live-check/run.ts --package <dir>`). Node runs the full check and bun and deno the small one. A file missing from the tarball or a broken build fails here, not on users' machines.
 3. **publish**, only if every verify passed:
    - publishes the same tarball file to npm under the `latest` dist-tag, with provenance;
-   - creates the GitHub release `v<version>`. Its notes say when and on which runtimes the package was checked, list the fill rates from node's run, and list the merged pull requests;
-   - deprecates earlier versions if the release closes a live-check issue.
+   - creates the GitHub release `v<version>`. Its notes say when and on which runtimes the package was checked, list the fill rates from node's run, and list the merged pull requests.
 
 npm's `latest` therefore only ever points at a tarball that passed the live check.
 
-Publishing uses npm trusted publishing: npm accepts the workflow's GitHub OIDC identity in place of a token. The trusted publisher is tied to `release.yml` and the GitHub environment `npm`.
-
-## Deprecation
-
-When a release closes an issue labelled `live-check` (and not `drill`), Airbnb changed something every earlier version gets wrong. The publish job then runs
-
-```bash
-npm deprecate "airbnb-dlp@<X.Y.Z" "airbnb.com changed and this version no longer works with it (issues #N in NickCrews/airbnb-dlp). Upgrade to X.Y.Z or later."
-```
-
-and npm warns anyone who installs an older version. A later repair replaces the message on all of them.
-
-The job finds those issues through the pull requests merged since the previous release tag: GitHub's "closing issues" link, which `Closes #N` in a pull request's body creates.
-
-`npm deprecate` needs a token, the `NPM_TOKEN` secret, because trusted publishing covers only publishing. If the token is missing or expired, the package is still published and the step fails with a warning that prints the command to run by hand.
+Publishing uses npm trusted publishing: npm accepts the workflow's GitHub OIDC identity in place of a token. The trusted publisher is tied to `release.yml` and the GitHub environment `npm`, which only `main` can deploy to. The package refuses tokens, so there is no npm credential stored anywhere to leak or rotate, and the release workflow on `main` is the only automated way to publish.
 
 ## What downstream users should do
 
-The README tells users to depend on `airbnb-dlp@^1` and to keep their lockfile current, for example with Renovate or Dependabot set to merge patch updates automatically. A lockfile pins a version, so a repair only reaches them when the lockfile is updated.
+The README tells users to depend on `airbnb-dlp@^1` and to keep their lockfile current. A lockfile pins a version, so a repair only reaches them when the lockfile is updated.
 
 ## Procedures
 
@@ -81,14 +66,11 @@ npm does not let a trusted publisher be added before the package exists, so the 
    ```bash
    npm trust github airbnb-dlp --repo NickCrews/airbnb-dlp --file release.yml --env npm --allow-publish
    ```
-8. **Deprecation token**: a granular token for the `airbnb-dlp` package only, read and write, bypassing two-factor authentication so CI can use it, stored as the secret `NPM_TOKEN`:
+8. **Refuse tokens**: set the package's Publishing access to "Require two-factor authentication and disallow tokens". Trusted publishing keeps working; any token, including a leaked one, can no longer publish.
    ```bash
-   npm token create --name airbnb-dlp-deprecate --packages airbnb-dlp --packages-and-scopes-permission read-write --bypass-2fa --expires 90
-   gh secret set NPM_TOKEN --repo NickCrews/airbnb-dlp --env npm
+   npm access set mfa=publish airbnb-dlp
    ```
 9. **Resume releases**: `gh workflow enable release.yml`.
-
-Leave airbnb-dlp's Publishing access (package Settings on npmjs.com) on "Require two-factor authentication or a granular access token with bypass 2FA enabled". "Disallow tokens" would also refuse the deprecation token.
 
 ### Releasing a minor or major
 
@@ -97,7 +79,7 @@ Leave airbnb-dlp's Publishing access (package Settings on npmjs.com) on "Require
 
 ### Starting a new major
 
-After `2.0.0` is published, deprecate the old major by hand:
+Optionally, after `2.0.0` is published, deprecate the old major from your machine (`npm login`; npm asks for two-factor authentication):
 
 ```bash
 npm deprecate "airbnb-dlp@1.x" "1.x no longer receives repairs for airbnb.com changes. Upgrade to 2.x; see the 2.0.0 release notes."
@@ -118,15 +100,10 @@ Nothing was published, and `latest` still points at the previous release. Read t
   gh release create vX.Y.Z --target <commit> --title vX.Y.Z --generate-notes
   ```
   The next release's version is still correct, because the version check also reads npm.
-- **Deprecation failed**: run the command the step's warning printed, with a token that can write to the package (`npm login` locally, then `npm deprecate ...`).
-
-### Rotating NPM_TOKEN
-
-The deprecation token lasts 90 days. Before it expires, create a new granular token for the `airbnb-dlp` package (Read and write, bypass two-factor authentication), run `gh secret set NPM_TOKEN --repo NickCrews/airbnb-dlp --env npm`, and revoke the old token. An expired token never blocks publishing, only deprecation.
 
 ### Withdrawing a bad release
 
-Do not unpublish: users' lockfiles may already pin the version, and npm never allows that version number again. Fix forward with a new patch, then deprecate the bad version:
+Do not unpublish: users' lockfiles may already pin the version, and npm never allows that version number again. Fix forward with a new patch. Optionally, deprecate the bad version from your machine:
 
 ```bash
 npm deprecate "airbnb-dlp@X.Y.Z" "<what is wrong>. Upgrade to X.Y.(Z+1)."

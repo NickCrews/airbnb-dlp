@@ -2,8 +2,7 @@
 # It packs the tarball once, runs the live check against that tarball
 # installed into an empty project on node, bun and deno, and publishes the same file
 # only if every runtime passes, so npm's `latest` is always a build that worked
-# against airbnb.com. A release that closes a live-check issue then deprecates
-# every earlier version. Versioning and the maintainer's procedures are in
+# against airbnb.com. Versioning and the maintainer's procedures are in
 # docs/release.md.
 name: Release
 on:
@@ -122,14 +121,11 @@ jobs:
     permissions:
       contents: write
       id-token: write
-      issues: read
-      pull-requests: read
     env:
       VERSION: ${{ needs.pack.outputs.version }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v5
-        with: { fetch-depth: 0 }
       - uses: actions/setup-node@v5
         with: { node-version: 24, registry-url: 'https://registry.npmjs.org' }
       # Trusted publishing needs npm 11.5.1 or later.
@@ -146,32 +142,3 @@ jobs:
         run: |
           node scripts/release/notes.ts .release/reports > .release/notes.md
           gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" --notes-file .release/notes.md --generate-notes
-      # A repair means airbnb.com changed in a way every earlier version
-      # mishandles, so those versions are deprecated with a pointer to this one.
-      # The package is already published, so a failure here does not fail the release.
-      - name: Deprecate earlier versions after a repair
-        continue-on-error: true
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          previous=$(git tag --list 'v*' --sort=-v:refname | grep -vx "v$VERSION" | head -n1)
-          if [ -z "$previous" ]; then echo "First release: nothing to deprecate."; exit 0; fi
-          issues=$(
-            for sha in $(git rev-list "$previous..$GITHUB_SHA"); do
-              gh api "repos/$GITHUB_REPOSITORY/commits/$sha/pulls" --jq '.[].number'
-            done | sort -u | while read -r pr; do
-              gh pr view "$pr" --json closingIssuesReferences --jq '.closingIssuesReferences[].number'
-            done | sort -un | while read -r issue; do
-              gh issue view "$issue" --json number,labels \
-                --jq 'select(any(.labels[]; .name == "live-check") and all(.labels[]; .name != "drill")) | .number'
-            done
-          )
-          if [ -z "$issues" ]; then echo "No live-check issue closed since $previous: nothing to deprecate."; exit 0; fi
-          refs=$(printf '#%s ' $issues | sed 's/ $//')
-          message="airbnb.com changed and this version no longer works with it (issues $refs in $GITHUB_REPOSITORY). Upgrade to $VERSION or later."
-          echo "Deprecating airbnb-dlp@<$VERSION: $message" >> "$GITHUB_STEP_SUMMARY"
-          if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "::warning::NPM_TOKEN is not set, so earlier versions were not deprecated. Run: npm deprecate \"airbnb-dlp@<$VERSION\" \"$message\""
-            exit 1
-          fi
-          npm deprecate "airbnb-dlp@<$VERSION" "$message"
