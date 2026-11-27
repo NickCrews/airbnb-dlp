@@ -19,7 +19,7 @@ export const OPERATIONS = {
   StaysSearch: 'aec09eb74dbd01c4019adbb6b4fcc3cc2ca224457ebcc3a2219bb4f4f5c8f206',
   PdpAvailabilityCalendarV2Query: '4d4724885b57d91f65be3c50c8b792b92a0dc723a871affb6ee358a0caf6d694',
   StaysPdpBookItQuery: '9afe04ccb0e7082750ec50fb56513196422b992449bb0406c3dffcc954863b68',
-  StaysPdpReviewsQuery: 'cfdc3ffbe997a618795fc5a8f9a9b484054ce9be68c8788cd2ffda999934c5ae',
+  StaysPdpReviewsQuery: '5b0e5fd2a8c9f7c9e3b1d4a6f80c2e71b9d3a5c7e9f1b3d5a7c9e1f3b5d7a9c1',
 } as const;
 export type Operation = keyof typeof OPERATIONS;
 
