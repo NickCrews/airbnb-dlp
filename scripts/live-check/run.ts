@@ -9,7 +9,7 @@
  * Exit code 0 when every check passes, 1 otherwise. The report names each
  * failure's category; file-issues.ts turns it into issues.
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { bookableStays, createClient } from '../../src/entry-native.ts';
@@ -21,13 +21,29 @@ import type { BBox, Client, Listing, Outcome, Result, SearchHit, SearchQuery, St
 import { inBox } from '../../src/products/search.ts';
 import { safeToday, addDays } from '../../src/dates.ts';
 import { type Area, type Failure, type Report, loadContract, loadHistory, sampleEvenly } from './contract.ts';
-import { checkFillRates, fillRates } from './fill-rates.ts';
+import { evaluateFillRates, fillRates } from './fill-rates.ts';
 
 /** Everything the run prints, also written to log.txt so the issue it files can quote it. */
 const logLines: string[] = [];
 function log(line = ''): void {
   console.log(line);
   logLines.push(line);
+}
+
+/** On GitHub Actions, each stage's requests fold into a collapsible group; log.txt has no group markers. */
+const onActions = process.env.GITHUB_ACTIONS === 'true';
+function startGroup(title: string): void {
+  if (onActions) console.log(`::group::${title}`);
+}
+function endGroup(): void {
+  if (onActions) console.log('::endgroup::');
+}
+
+/** Prints a section heading and what the section tests. */
+function section(title: string, tests: string): void {
+  log('');
+  log(`== ${title}`);
+  log(`   ${tests}`);
 }
 
 const args = process.argv.slice(2);
@@ -87,6 +103,9 @@ const client: Client = createClient({
 const startedAt = new Date().toISOString();
 const today = safeToday(Date.now());
 const failures: Failure[] = [];
+type Verdict = 'PASS' | 'FAIL' | 'SKIP';
+/** Every check the run made, in order, with its verdict. */
+const checks: { check: string; verdict: Verdict; message: string }[] = [];
 let requests = 0;
 let blocked: AirbnbError | null = null;
 
@@ -96,8 +115,28 @@ function remaining(): number {
 
 function fail(category: ErrorCategory, check: string, message: string, detail?: string): void {
   failures.push(detail === undefined ? { category, check, message } : { category, check, message, detail });
+  checks.push({ check, verdict: 'FAIL', message });
   log(`  FAIL [${category}] ${check}: ${message}`);
   if (detail !== undefined) log(`    detail: ${oneLine(detail)}`);
+}
+
+function pass(check: string, message: string): void {
+  checks.push({ check, verdict: 'PASS', message });
+  log(`  PASS ${check}: ${message}`);
+}
+
+function skip(check: string, message: string): void {
+  checks.push({ check, verdict: 'SKIP', message });
+  log(`  SKIP ${check}: ${message}`);
+}
+
+/**
+ * Records one check. `expect` says what the check requires, `found` what the run saw;
+ * a failure's message is `found` with the requirement after it.
+ */
+function verify(ok: boolean, category: ErrorCategory, check: string, expect: string, found: string, detail?: string): void {
+  if (ok) pass(check, `${found} (requires ${expect})`);
+  else fail(category, check, `${found} (requires ${expect})`, detail);
 }
 
 /**
@@ -129,7 +168,13 @@ async function run<I, T>(name: string, allowance: number, start: (maxRequests: n
     return null;
   }
   log(`${name}: up to ${budget} requests (${requests} of ${thresholds.requestBudget} used so far)`);
-  const result = await start(budget).all();
+  startGroup(`${name}: requests`);
+  let result: { items: T[]; outcome: Outcome<I> };
+  try {
+    result = await start(budget).all();
+  } finally {
+    endGroup();
+  }
   requests += result.outcome.requests;
   const { error, incomplete } = result.outcome;
   const ended = error ? `; ended early: ${error.category}: ${oneLine(error.message)}` : '';
@@ -140,17 +185,24 @@ async function run<I, T>(name: string, allowance: number, start: (maxRequests: n
     fail('Blocked', name, 'Airbnb blocked the run', result.outcome.error.message);
   } else if (result.outcome.error) {
     fail(result.outcome.error.category, name, 'the call ended early', result.outcome.error.message);
+  } else {
+    pass(name, 'the call finished without an error that ended it');
   }
   return result;
 }
 
 function successShare<I, T>(name: string, items: Result<I, T>[], min: number): void {
-  if (items.length === 0) return;
+  if (items.length === 0) {
+    skip(`${name}.success`, 'no items were fetched');
+    return;
+  }
   const okCount = items.filter((r) => r.ok).length;
   if (okCount / items.length < min) {
     const errors = items.flatMap((r) => (r.ok ? [] : [r.error]));
     const category = mostCommon(errors.map((e) => e.category));
     fail(category, `${name}.success`, `${okCount} of ${items.length} succeeded (minimum share ${min})`, errors[0]?.message);
+  } else {
+    pass(`${name}.success`, `${okCount} of ${items.length} succeeded (minimum share ${min})`);
   }
 }
 
@@ -162,8 +214,16 @@ function mostCommon(categories: ErrorCategory[]): ErrorCategory {
 
 const pad = (box: BBox, deg: number): BBox => ({ south: box.south - deg, north: box.north + deg, west: box.west - deg, east: box.east + deg });
 
+log(`Live check against airbnb.com, ${small ? 'small run (pull-request set)' : 'full run'}, started ${startedAt}`);
+log(`Areas: ${areas.map((a) => `${a.id} (${a.kind})`).join(', ')}`);
+log(`Limits: ${thresholds.requestBudget} requests, ${thresholds.requestsPerSecond} per second`);
+if (simulateBlocked) log('LIVE_CHECK_SIMULATE=blocked: every request gets a simulated 429');
+log(`History: ${history.length} earlier reports for fill-rate baselines`);
+log('Each check prints PASS, FAIL or SKIP with what it found and what it requires.');
+
 // ---------------------------------------------------------------- search per area
 
+section('Search per area', 'Searches each reference area: the search covers the area, finds enough listings, places them inside it, and parses sane prices.');
 const hitsByArea = new Map<string, SearchHit[]>();
 const fullArea = areas.find((a) => a.kind === 'rural') ?? areas[0]!;
 // The fully searched area goes first, so the coverage audit has a complete set to check against.
@@ -175,46 +235,56 @@ for (const area of [fullArea, ...areas.filter((a) => a !== fullArea)]) {
   if (!result) continue;
   const hits = result.items;
   hitsByArea.set(area.id, hits);
-  for (const { error } of result.outcome.incomplete) {
-    if (error.category === 'BudgetExhausted' && area !== fullArea) continue;
+  const incomplete = result.outcome.incomplete.filter(({ error }) => !(error.category === 'BudgetExhausted' && area !== fullArea));
+  for (const { error } of incomplete) {
     fail(error.category === 'BudgetExhausted' ? 'Unknown' : error.category, `search.${area.id}.complete`, 'the search did not cover the whole area', error.message);
   }
-  if (hits.length < area.minListings) {
-    fail('ResponseChanged', `search.${area.id}.count`, `${hits.length} listings found, minimum ${area.minListings}`);
+  if (incomplete.length === 0) {
+    const allowed = result.outcome.incomplete.length;
+    pass(`search.${area.id}.complete`, area === fullArea || allowed === 0 ? 'the search covered the whole area' : `the search covered the area except ${allowed} parts left for lack of budget, which this area allows`);
   }
-  const outside = hits.filter((h) => h.listing.location && !inBox(pad(area.bbox, 0.01), h.listing.location.lat, h.listing.location.lng));
-  if (outside.length > 0) fail('ResponseChanged', `search.${area.id}.coordinates`, `${outside.length} listings outside the area`);
+  verify(hits.length >= area.minListings, 'ResponseChanged', `search.${area.id}.count`, `at least ${area.minListings}`, `${hits.length} listings found`);
+  const located = hits.filter((h) => h.listing.location);
+  const outside = located.filter((h) => !inBox(pad(area.bbox, 0.01), h.listing.location!.lat, h.listing.location!.lng));
+  if (located.length === 0) skip(`search.${area.id}.coordinates`, 'no listing has a location');
+  else verify(outside.length === 0, 'ResponseChanged', `search.${area.id}.coordinates`, 'none outside the area, padded by 0.01°', `${outside.length} of ${located.length} located listings outside the area`);
   const priced = hits.filter((h) => h.listing.price?.total);
-  if (hits.length > 0 && priced.length / hits.length < thresholds.starting.searchCardsWithPrice) {
-    fail('ResponseChanged', `search.${area.id}.price`, `${priced.length} of ${hits.length} cards have a parsed price`);
-  }
+  if (hits.length === 0) skip(`search.${area.id}.price`, 'no cards to check');
+  else verify(priced.length / hits.length >= thresholds.starting.searchCardsWithPrice, 'ResponseChanged', `search.${area.id}.price`, `a share of at least ${thresholds.starting.searchCardsWithPrice}`, `${priced.length} of ${hits.length} cards have a parsed price`);
   const { min, max } = thresholds.ranges.nightlyPriceUsd;
-  const badPrice = hits.filter((h) => h.listing.price?.nightly && (h.listing.price.nightly.amount < min || h.listing.price.nightly.amount > max));
-  if (badPrice.length > 0) fail('ResponseChanged', `search.${area.id}.priceRange`, `${badPrice.length} nightly prices outside ${min}-${max}`);
+  const nightly = hits.filter((h) => h.listing.price?.nightly);
+  const badPrice = nightly.filter((h) => h.listing.price!.nightly!.amount < min || h.listing.price!.nightly!.amount > max);
+  if (nightly.length === 0) skip(`search.${area.id}.priceRange`, 'no card has a nightly price');
+  else verify(badPrice.length === 0, 'ResponseChanged', `search.${area.id}.priceRange`, `every one within ${min}-${max} USD`, `${badPrice.length} of ${nightly.length} nightly prices outside the range`);
 }
 
 // ---------------------------------------------------------------- coverage audit
 
+section('Coverage audit', `Searches small boxes around listings the full search of ${fullArea.id} found, and checks the full search did not miss listings those boxes find.`);
 {
   const hits = hitsByArea.get(fullArea.id) ?? [];
   const found = new Set(hits.map((h) => h.listing.id));
   const centres = sampleEvenly(hits.filter((h) => h.listing.location), small ? 1 : thresholds.coverage.auditBoxes);
   let seen = 0;
   let missed = 0;
+  let unfinished = 0;
   for (const centre of centres) {
     const { lat, lng } = centre.listing.location!;
     const box = { south: lat - 0.005, north: lat + 0.005, west: lng - 0.01, east: lng + 0.01 };
     const result = await run('coverage', ALLOWANCE.coverage, (maxRequests) => client.search([{ area: { bbox: box } }], { maxRequests }));
-    if (!result || result.outcome.incomplete.length > 0) continue;
+    if (!result || result.outcome.incomplete.length > 0) {
+      unfinished++;
+      continue;
+    }
     for (const hit of result.items) {
       if (!hit.listing.location || !inBox(fullArea.bbox, hit.listing.location.lat, hit.listing.location.lng)) continue;
       seen++;
       if (!found.has(hit.listing.id)) missed++;
     }
   }
-  if (seen > 0 && missed / seen > thresholds.coverage.maxMissShare) {
-    fail('ResponseChanged', 'search.coverage', `${missed} of ${seen} listings in audit boxes were missed by the full search`);
-  }
+  const left = unfinished > 0 ? `; ${unfinished} of ${centres.length} boxes left out because their search did not finish` : '';
+  if (seen === 0) skip('search.coverage', `no audit box found listings to compare${left}`);
+  else verify(missed / seen <= thresholds.coverage.maxMissShare, 'ResponseChanged', 'search.coverage', `a missed share of at most ${thresholds.coverage.maxMissShare}`, `${missed} of ${seen} listings in ${centres.length - unfinished} audit boxes were missed by the full search${left}`);
 }
 
 // ---------------------------------------------------------------- filters
@@ -235,8 +305,10 @@ const FILTERS: { name: string; query: Partial<SearchQuery>; card?: (h: SearchHit
   { name: 'minBedrooms', query: { minBedrooms: 3, nightlyPrice: { min: 250, max: 260 } }, page: (l) => l.bedrooms?.count == null || l.bedrooms.count >= 3 },
   { name: 'propertyGroups', query: { propertyGroups: ['apartment'] }, page: (l) => l.propertyType === null || ['APARTMENT', 'CONDOMINIUM', 'SERVICED_APARTMENT', 'LOFT'].includes(l.propertyType) },
 ];
+section('Search filters', `Searches ${filterArea.id} with each filter, and checks the results satisfy it, from search cards or from a sample of listing pages.`);
 for (const filter of small ? FILTERS.slice(0, 2) : FILTERS) {
   const query: SearchQuery = { area: { bbox: filterBox }, nightlyPrice: FILTER_BAND, ...filter.query };
+  log(`filter.${filter.name}: query ${JSON.stringify({ ...filter.query, nightlyPrice: query.nightlyPrice })}`);
   const result = await run(`filter.${filter.name}`, ALLOWANCE.filterSearch, (maxRequests) => client.search([query], { maxRequests }));
   if (!result) continue;
   if (result.items.length === 0) {
@@ -245,18 +317,22 @@ for (const filter of small ? FILTERS.slice(0, 2) : FILTERS) {
   }
   if (filter.card) {
     const bad = result.items.filter((h) => !filter.card!(h));
-    if (bad.length > 0) fail('ResponseChanged', `filter.${filter.name}`, `${bad.length} of ${result.items.length} results do not satisfy the filter`);
+    verify(bad.length === 0, 'ResponseChanged', `filter.${filter.name}`, 'every search card to satisfy the filter', `${bad.length} of ${result.items.length} results do not satisfy the filter`);
   }
   if (filter.page) {
     const ids = sampleEvenly(result.items, 2).map((h) => h.listing.id);
     const pages = await run(`filter.${filter.name}.pages`, ALLOWANCE.filterPages, (maxRequests) => client.listings(ids, { maxRequests }));
-    const bad = (pages?.items ?? []).flatMap((r) => (r.ok && !filter.page!(r.value) ? [r.value.id] : []));
-    if (bad.length > 0) fail('ResponseChanged', `filter.${filter.name}`, `listings ${bad.join(', ')} do not satisfy the filter`);
+    const read = (pages?.items ?? []).flatMap((r) => (r.ok ? [r.value] : []));
+    const bad = read.filter((l) => !filter.page!(l)).map((l) => l.id);
+    if (read.length === 0) skip(`filter.${filter.name}`, 'no listing page was read to check the filter against');
+    else if (bad.length > 0) fail('ResponseChanged', `filter.${filter.name}`, `listings ${bad.join(', ')} do not satisfy the filter`);
+    else pass(`filter.${filter.name}`, `all ${read.length} sampled listing pages satisfy the filter`);
   }
 }
 
 // ---------------------------------------------------------------- fetches on sampled listings
 
+section('Fetches on sampled listings', `Fetches listing pages, calendars, price quotes and reviews for up to ${perArea} listings per area, and checks enough succeed and their values are in range.`);
 const listingResults: Result<string, Listing>[] = [];
 const sampled = new Map<Area, string[]>();
 for (const area of areas) {
@@ -276,7 +352,9 @@ if (calendars) {
     if (!r.ok) continue;
     const bad = r.value.days.filter((d) => d.date < today || d.date > last);
     if (bad.length > 0) fail('ResponseChanged', 'calendars.range', `listing ${r.value.id}: ${bad.length} days outside the next 12 months`);
+    else pass('calendars.range', `listing ${r.value.id}: every day within ${today} to ${last}`);
     if (r.value.days.length < 300) fail('ResponseChanged', 'calendars.length', `listing ${r.value.id}: only ${r.value.days.length} days`);
+    else pass('calendars.length', `listing ${r.value.id}: ${r.value.days.length} days (requires at least 300)`);
   }
 }
 
@@ -295,6 +373,7 @@ if (quotes) {
     const nights = (Date.parse(r.input.checkOut) - Date.parse(r.input.checkIn)) / 86_400_000;
     const nightly = r.value.total.amount / nights;
     if (nightly < min || nightly > max) fail('ResponseChanged', 'priceQuotes.range', `listing ${r.input.id}: ${nightly.toFixed(2)} a night`);
+    else pass('priceQuotes.range', `listing ${r.input.id}: ${nightly.toFixed(2)} a night for ${r.input.checkIn} to ${r.input.checkOut} (requires ${min}-${max})`);
   }
 }
 
@@ -306,21 +385,33 @@ if (reviews) {
     if (!r.ok) continue;
     const future = r.value.reviews.filter((v) => Date.parse(v.createdAt) > now + 86_400_000);
     if (future.length > 0) fail('ResponseChanged', 'reviews.range', `listing ${r.value.id}: ${future.length} reviews dated in the future`);
+    else pass('reviews.range', `listing ${r.value.id}: none of ${r.value.reviews.length} reviews dated in the future`);
   }
 }
 
 // ---------------------------------------------------------------- fill rates
 
 const listings = listingResults.flatMap((r) => (r.ok ? [r.value] : []));
+section('Listing pages: location and fill rates', `Checks listing pages place each listing in its area, and each field is filled on at least its threshold share of the ${listings.length} pages read.`);
 for (const area of areas) {
   const ids = new Set(sampled.get(area));
-  const areaListings = listings.filter((l) => ids.has(l.id));
+  const located = listings.filter((l) => ids.has(l.id) && l.location);
   const box = pad(area.bbox, 0.01);
-  const outside = areaListings.filter((l) => l.location && !inBox(box, l.location.lat, l.location.lng));
-  if (outside.length > 0) fail('ResponseChanged', `listings.${area.id}.coordinates`, `${outside.length} listing pages place the listing outside the area`);
+  const outside = located.filter((l) => !inBox(box, l.location!.lat, l.location!.lng));
+  if (located.length === 0) skip(`listings.${area.id}.coordinates`, 'no listing page with a location');
+  else if (outside.length > 0) fail('ResponseChanged', `listings.${area.id}.coordinates`, `${outside.length} listing pages place the listing outside the area`);
+  else pass(`listings.${area.id}.coordinates`, `all ${located.length} located listing pages are inside the area`);
 }
 const rates = fillRates(listings, areas, sampled);
-if (!blocked) failures.push(...checkFillRates(rates, history, thresholds));
+if (blocked) {
+  log('  fill rates: not checked, the run is blocked');
+} else {
+  for (const r of evaluateFillRates(rates, history, thresholds)) {
+    if (r.outcome === 'fail') fail('ResponseChanged', r.check, r.message);
+    else if (r.outcome === 'pass') pass(r.check, r.message);
+    else skip(r.check, r.message);
+  }
+}
 
 // ---------------------------------------------------------------- report
 
@@ -339,7 +430,9 @@ const report: Report = {
 };
 mkdirSync(outDir, { recursive: true });
 writeFileSync(join(outDir, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
+const count = (v: Verdict) => checks.filter((c) => c.verdict === v).length;
 log('');
+log(`== Summary: ${checks.length} checks: ${count('PASS')} passed, ${count('FAIL')} failed, ${count('SKIP')} skipped`);
 log(`${report.passed ? 'PASSED' : 'FAILED'}: ${requests} requests; ${reported.length} failures reported`);
 for (const f of reported) {
   log(`  [${f.category}] ${f.check}: ${f.message}`);
@@ -353,4 +446,19 @@ if (unreported.length > 0) {
 log(`Wrote ${join(outDir, 'report.json')}${report.passed ? '' : ` and ${join(outDir, 'recordings.json.gz')}`}.`);
 if (!report.passed) writeFileSync(join(outDir, 'recordings.json.gz'), gzipSync(JSON.stringify(transport.recordings())));
 writeFileSync(join(outDir, 'log.txt'), `${logLines.join('\n')}\n`);
+if (process.env.GITHUB_STEP_SUMMARY) {
+  const cell = (text: string) => oneLine(text).replaceAll('|', '\\|');
+  const rows = checks.map((c) => `| ${c.verdict === 'PASS' ? '✅' : c.verdict === 'FAIL' ? '❌' : '➖'} ${c.verdict} | \`${c.check}\` | ${cell(c.message)} |`);
+  const summary = [
+    `### Live check ${report.passed ? 'passed' : 'failed'} (${small ? 'small' : 'full'} run)`,
+    '',
+    `${requests} requests. ${checks.length} checks: ${count('PASS')} passed, ${count('FAIL')} failed, ${count('SKIP')} skipped.`,
+    '',
+    '| Result | Check | Found |',
+    '| --- | --- | --- |',
+    ...rows,
+    '',
+  ];
+  appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${summary.join('\n')}\n`);
+}
 process.exitCode = report.passed ? 0 : 1;

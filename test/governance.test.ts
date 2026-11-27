@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isProtected, protectedPatterns } from '../scripts/path-check.ts';
 import { checksMarker, describe as describeFailure, issueBody, issueLabels, logExcerpt } from '../scripts/live-check/file-issues.ts';
-import { checkFillRates } from '../scripts/live-check/fill-rates.ts';
+import { checkFillRates, evaluateFillRates } from '../scripts/live-check/fill-rates.ts';
 import { loadContract, type Report } from '../scripts/live-check/contract.ts';
 
 describe('path allowlist', () => {
@@ -65,6 +65,15 @@ describe('fill rates', () => {
   it('uses starting thresholds before a baseline exists', () => {
     const failures = checkFillRates({ location: 0.5, host: 0.95 }, [], thresholds);
     expect(failures.map((f) => f.check)).toEqual(['fill.location']);
+  });
+  it('reports a verdict for every field, passed, failed or skipped', () => {
+    const results = evaluateFillRates({ location: 0.5, host: 0.95, propertyType: 0.8, beds: NaN }, [], thresholds);
+    expect(results.map((r) => [r.check, r.outcome])).toEqual([
+      ['fill.location', 'fail'],
+      ['fill.host', 'pass'],
+      ['fill.propertyType', 'skip'],
+      ['fill.beds', 'skip'],
+    ]);
   });
   it('compares with the rolling baseline once a day of runs exists', () => {
     const now = Date.parse('2026-11-26T12:00:00Z');
