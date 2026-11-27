@@ -1,8 +1,6 @@
-# Paths that need the maintainer's review. Most are also in
-# contract/protected-paths.json, which the path-allowlist check keeps the repair
-# agent out of. src/identity.ts and src/transport/ are not: the agent may change
-# headers, pacing and the fingerprint profile, and its pull request then waits
-# for this review instead of auto-merging.
+# Every maintainer-only path, the same list as contract/protected-paths.json.
+# Code-owner review is required only for these; the repair agent's pull requests
+# touch none of them, which the path-allowlist check enforces.
 
 /contract/ @NickCrews
 /.github/ @NickCrews
@@ -23,10 +21,8 @@
 /tsconfig.json @NickCrews
 /tsconfig.build.json @NickCrews
 /src/classify.ts @NickCrews
-/src/identity.ts @NickCrews
 /src/scheduler.ts @NickCrews
 /src/defaults.ts @NickCrews
-/src/transport/ @NickCrews
 /src/types.ts @NickCrews
 /src/public.ts @NickCrews
 /src/errors.ts @NickCrews

@@ -49,7 +49,7 @@ If your run passes and the recordings show nothing the code could fix, comment o
 3. Run `pnpm test`, `pnpm typecheck`, `pnpm lint` and `pnpm live-check --small`.
 4. Open one pull request whose description says: what broke, what changed upstream, and before/after fill rates from a live run. Its body includes `Closes #<issue>`.
 
-A pull request that touches `src/identity.ts` or `src/transport/` waits for the maintainer's review before it merges; others merge when the required checks pass.
+The pull request merges when the required checks pass.
 
 ### 3. Hand over
 
