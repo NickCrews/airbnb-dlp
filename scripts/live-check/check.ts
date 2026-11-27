@@ -12,6 +12,7 @@ import { inBox } from '../../src/products/search.ts';
 import { safeToday, addDays } from '../../src/dates.ts';
 import { type Area, type Failure, type Report, loadContract, sampleEvenly } from './contract.ts';
 import { checkFillRates, fillRates } from './fill-rates.ts';
+import { checkClosedSets } from './closed-sets.ts';
 
 /** The parts of a library build the live check runs: its client, a helper, and its default transport. */
 export interface Library {
@@ -318,6 +319,7 @@ export async function liveCheck({ lib, small, history, trace, print = console.lo
   }
   const rates = fillRates(listings, areas, sampled);
   if (!blocked) failures.push(...checkFillRates(rates, history, thresholds));
+  failures.push(...checkClosedSets(listings, thresholds));
 
   // ---------------------------------------------------------------- report
 

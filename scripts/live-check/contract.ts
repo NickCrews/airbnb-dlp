@@ -26,6 +26,8 @@ export interface Thresholds {
   };
   ranges: { nightlyPriceUsd: { min: number; max: number }; calendarMonths: number };
   coverage: { auditBoxes: number; maxMissShare: number };
+  /** Sampled listings allowed per field whose Airbnb value the library maps to null. */
+  maxUnrecognisedValues: number;
 }
 
 export interface Failure {

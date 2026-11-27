@@ -222,6 +222,7 @@ export function parseListing(id: ListingId, response: unknown): Listing {
     location: { lat, lng, exact },
     address: location?.address ?? null,
     roomType: roomTypeText ? (ROOM_TYPES[roomTypeText] ?? null) : null,
+    roomTypeText,
     propertyType: only(json, 'propertyType', (v): v is string => typeof v === 'string' && /^[A-Z][A-Z_]*$/.test(v)),
     guestCapacity,
     beds,

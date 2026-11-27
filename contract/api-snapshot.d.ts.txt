@@ -294,8 +294,10 @@ export interface Listing {
     }) | null;
     /** Set only when the host publishes a street address. */
     address: string | null;
-    /** From Airbnb's roomType value; null if Airbnb sends one the library does not know. */
+    /** From Airbnb's roomType value; null if Airbnb sends none, or one the library does not know. */
     roomType: RoomType | null;
+    /** Airbnb's roomType value as sent, e.g. "Entire home/apt"; null when Airbnb sends none. */
+    roomTypeText: string | null;
     /** Airbnb's propertyType enum value, e.g. 'HOUSE', 'TENT', 'HOSTEL'. */
     propertyType: PropertyType | null;
     guestCapacity: number | null;

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { isProtected, protectedPatterns } from '../scripts/path-check.ts';
 import { checksMarker, describe as describeFailure, issueBody, issueLabels, logExcerpt } from '../scripts/live-check/file-issues.ts';
 import { checkFillRates } from '../scripts/live-check/fill-rates.ts';
+import { checkClosedSets } from '../scripts/live-check/closed-sets.ts';
+import type { Listing } from '../src/types.ts';
 import { loadContract, type Report } from '../scripts/live-check/contract.ts';
 
 describe('path allowlist', () => {
@@ -71,5 +73,46 @@ describe('fill rates', () => {
     const past = Array.from({ length: 6 }, (_, i) => ({ ...report(new Date(now - i * 4 * 3_600_000).toISOString(), []), fillRates: { beds: 0.6 } }));
     expect(checkFillRates({ beds: 0.5 }, past, thresholds, now)).toEqual([]);
     expect(checkFillRates({ beds: 0.3 }, past, thresholds, now)).toHaveLength(1);
+  });
+});
+
+describe('closed sets', () => {
+  const { thresholds } = loadContract();
+  const listing = (over: Partial<Listing>): Listing => ({
+    id: '1',
+    location: null,
+    address: null,
+    roomType: 'entire_home',
+    roomTypeText: 'Entire home/apt',
+    propertyType: null,
+    guestCapacity: null,
+    beds: null,
+    bedrooms: { count: 2, text: '2 bedrooms' },
+    bathrooms: { count: 1, access: 'private', text: '1 bath' },
+    registration: null,
+    host: null,
+    photoUrls: [],
+    ...over,
+  });
+  it('passes recognised and missing values', () => {
+    const listings = [
+      listing({}),
+      listing({ roomType: null, roomTypeText: null, bedrooms: null, bathrooms: null }),
+      listing({ bathrooms: { count: null, access: 'shared', text: 'Shared bathroom' } }),
+    ];
+    expect(checkClosedSets(listings, thresholds)).toEqual([]);
+  });
+  it('fails on a value Airbnb sends that the library maps to null, keeping the value out of the message', () => {
+    const listings = [
+      listing({ roomType: null, roomTypeText: 'Cave' }),
+      listing({ roomType: null, roomTypeText: 'Cave' }),
+      listing({ bathrooms: { count: null, access: null, text: '1 ensuite bath' } }),
+      listing({ bedrooms: { count: null, text: 'Loft' } }),
+    ];
+    const failures = checkClosedSets(listings, thresholds);
+    expect(failures.map((f) => f.check)).toEqual(['values.roomType', 'values.bedrooms', 'values.bathrooms']);
+    expect(failures[0]!.message).toContain('2 of 4');
+    expect(failures[0]!.message).not.toContain('Cave');
+    expect(failures[0]!.detail).toBe('"Cave" x2');
   });
 });
