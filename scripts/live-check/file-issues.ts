@@ -2,7 +2,12 @@
  * Files a failing live check as an issue for the repair agent, which triages
  * it under AGENTS.md and hands it to the maintainer only when it cannot fix
  * it. One issue stays open while the live check keeps failing; a later run
- * comments on it only when the set of failing checks changes. Run by the
+ * comments on it only when the set of failing checks changes.
+ *
+ * Each notice in the report (a finding that does not fail the run) is filed
+ * as its own issue labelled needs-maintainer and live-check-notice, one open
+ * issue per check. Notice issues carry neither live-check nor agent-repair,
+ * so they start no repair session and do not hold the failure issue. Run by the
  * live-check workflow with a GitHub App token, since issues opened with the
  * default GITHUB_TOKEN start no workflow.
  * `node file-issues.ts <report.json> [--drill <branch>]`.
@@ -24,6 +29,30 @@ import type { Failure, Report } from './contract.ts';
 export const LABEL = 'live-check';
 export const AGENT_LABEL = 'agent-repair';
 export const DRILL_LABEL = 'drill';
+export const NOTICE_LABEL = 'live-check-notice';
+export const MAINTAINER_LABEL = 'needs-maintainer';
+
+/** Labels for a notice issue: the maintainer's, never the agent's. */
+export const NOTICE_LABELS = [NOTICE_LABEL, MAINTAINER_LABEL];
+
+/** The check a notice issue is for, as a hidden line in its body, so later runs find it. */
+export function noticeMarker(notice: Failure): string {
+  return `<!-- live-check notice: ${notice.check} -->`;
+}
+
+export function noticeBody(notice: Failure, report: Report, runUrl: string): string {
+  return [
+    'The live check found something that needs the maintainer. It does not fail the run, and the repair agent does not take it.',
+    '',
+    `Run: ${runUrl} (started ${report.startedAt}).`,
+    '',
+    describe(notice),
+    '',
+    'The values behind it are in the failure\'s `detail` in the run\'s `live-check-report` artifact (`report.json`).',
+    '',
+    noticeMarker(notice),
+  ].join('\n');
+}
 
 /** The line naming a drill's branch in its issue body. The agent workflow reads it back. */
 export function drillBranchLine(branch: string): string {
@@ -123,6 +152,7 @@ async function main() {
   // LIVE_CHECK_RUN_ID names the run the report came from when it is not this one.
   const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.LIVE_CHECK_RUN_ID || process.env.GITHUB_RUN_ID}`;
   console.log(`${reportPath}: ${report.failures.length} failures: ${report.failures.map((f) => f.check).join(', ') || '(none)'}`);
+  if (!drill) await fileNotices(report, runUrl);
   if (report.failures.length === 0) return;
   const logPath = join(dirname(reportPath), 'log.txt');
   const log = existsSync(logPath) ? readFileSync(logPath, 'utf8') : undefined;
@@ -147,6 +177,26 @@ async function main() {
   const issue = await github('/issues', { method: 'POST', body: JSON.stringify({ title: 'Live check failing', body, labels }) });
   console.log(`opened ${issue.html_url} with labels ${labels.join(', ')}`);
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `issues=${issue.number}\n`);
+}
+
+/** Opens an issue for each notice whose check has no open notice issue. */
+async function fileNotices(report: Report, runUrl: string): Promise<void> {
+  const notices = report.notices ?? [];
+  if (notices.length === 0) return;
+  const open = (await github(`/issues?state=open&labels=${NOTICE_LABEL}&per_page=100`)) as { number: number; body: string | null }[];
+  for (const notice of notices) {
+    const existing = open.find((i) => i.body?.includes(noticeMarker(notice)));
+    if (existing) {
+      console.log(`notice ${notice.check}: #${existing.number} is open`);
+      continue;
+    }
+    const issue = await github('/issues', {
+      method: 'POST',
+      body: JSON.stringify({ title: `Live check notice: ${notice.check}`, body: noticeBody(notice, report, runUrl), labels: NOTICE_LABELS }),
+    });
+    open.push({ number: issue.number, body: noticeMarker(notice) });
+    console.log(`notice ${notice.check}: opened ${issue.html_url}`);
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) await main();

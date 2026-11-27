@@ -90,7 +90,7 @@ jobs:
     needs: run
     if: >-
       always() &&
-      ((github.event_name == 'schedule' && needs.run.result == 'failure') || inputs.file_from_run != '')
+      ((github.event_name == 'schedule' && (needs.run.result == 'success' || needs.run.result == 'failure')) || inputs.file_from_run != '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

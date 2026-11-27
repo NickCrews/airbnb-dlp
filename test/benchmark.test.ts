@@ -83,7 +83,7 @@ describe('benchmark metrics', () => {
       { type: 'response', at: 1100, call: 1, request: 2, attempt: 0, status: 429, bytes: 10, ms: 100, category: 'Blocked' },
       { type: 'call.end', at: 1100, call: 1, product: 'listings', items: 2, requests: 2, incomplete: 1, error: 'Blocked' },
     ];
-    const report: Report = { startedAt: '2026-11-27T00:00:00Z', finishedAt: '2026-11-27T00:00:01Z', small: true, requests: 2, passed: false, failures: [{ category: 'Blocked', check: 'listings', message: 'Airbnb blocked the run' }], fillRates: null };
+    const report: Report = { startedAt: '2026-11-27T00:00:00Z', finishedAt: '2026-11-27T00:00:01Z', small: true, requests: 2, passed: false, failures: [{ category: 'Blocked', check: 'listings', message: 'Airbnb blocked the run' }], notices: [], fillRates: null };
     const a = armMetrics(events, report, { source: '.', commit: null, wallMs: 1100 });
     expect(a).toMatchObject({ requests: 2, refusals: 1, bytes: 1010, queuedMs: 905, error: 'Blocked', completed: false });
     expect(a.products.listings).toMatchObject({ calls: 1, items: 2, requests: 2, ms: 1100, bytes: 1010 });

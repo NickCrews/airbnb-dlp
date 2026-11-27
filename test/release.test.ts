@@ -39,6 +39,7 @@ describe('release notes', () => {
     requests: 40,
     passed: true,
     failures: [],
+    notices: [],
     fillRates,
   });
 

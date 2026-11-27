@@ -1,8 +1,10 @@
 /**
  * Fields the library maps from Airbnb's text onto a closed set. A value Airbnb
  * sends that the mapping does not recognise becomes null, which a consumer
- * cannot tell from a missing value, so any such value fails the check. The
- * failure message gives field and count; the values themselves go in detail.
+ * cannot tell from a missing value. Each field with such values is a notice:
+ * adding a value to a set changes the public contract, so it goes to the
+ * maintainer without failing the run. The message gives field and count; the
+ * values themselves go in detail.
  */
 import type { Listing } from '../../src/types.ts';
 import type { Failure, Thresholds } from './contract.ts';

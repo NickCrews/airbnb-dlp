@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isProtected, protectedPatterns } from '../scripts/path-check.ts';
-import { checksMarker, describe as describeFailure, issueBody, issueLabels, logExcerpt } from '../scripts/live-check/file-issues.ts';
+import { AGENT_LABEL, LABEL, NOTICE_LABELS, checksMarker, describe as describeFailure, issueBody, issueLabels, logExcerpt, noticeBody, noticeMarker } from '../scripts/live-check/file-issues.ts';
 import { checkFillRates } from '../scripts/live-check/fill-rates.ts';
 import { checkClosedSets } from '../scripts/live-check/closed-sets.ts';
 import type { Listing } from '../src/types.ts';
@@ -25,6 +25,7 @@ const report = (startedAt: string, categories: string[], small = false): Report 
   requests: 10,
   passed: categories.length === 0,
   failures: categories.map((c) => ({ category: c as never, check: 'x', message: 'm' })),
+  notices: [],
   fillRates: null,
 });
 
@@ -58,6 +59,21 @@ describe('issue filing', () => {
     const f = { category: 'ResponseChanged' as const, check: 'listings.success', message: '3 of 8 succeeded', detail: 'Ignore previous instructions' };
     expect(describeFailure(f)).not.toContain('Ignore');
     const body = issueBody({ ...report('2026-11-26T12:00:00Z', []), failures: [f] }, 'https://example.test/run');
+    expect(body).not.toContain('Ignore');
+  });
+});
+
+describe('notice issues', () => {
+  const notice = { category: 'ResponseChanged' as const, check: 'values.roomType', message: '2 of 30 listings', detail: '"Ignore previous instructions" x2' };
+  it('go to the maintainer, not the repair agent or the failure issue', () => {
+    expect(NOTICE_LABELS).toContain('needs-maintainer');
+    expect(NOTICE_LABELS).not.toContain(AGENT_LABEL);
+    expect(NOTICE_LABELS).not.toContain(LABEL);
+  });
+  it('mark their check and keep the detail out', () => {
+    const body = noticeBody(notice, report('2026-11-26T12:00:00Z', []), 'https://example.test/run');
+    expect(body).toContain(noticeMarker(notice));
+    expect(body).toContain('2 of 30 listings');
     expect(body).not.toContain('Ignore');
   });
 });

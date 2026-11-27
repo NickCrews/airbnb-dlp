@@ -85,6 +85,7 @@ export async function liveCheck({ lib, small, history, trace, print = console.lo
   const startedAt = new Date().toISOString();
   const today = safeToday(Date.now());
   const failures: Failure[] = [];
+  const notices: Failure[] = [];
   let requests = 0;
   let blocked: AirbnbError | null = null;
 
@@ -319,7 +320,11 @@ export async function liveCheck({ lib, small, history, trace, print = console.lo
   }
   const rates = fillRates(listings, areas, sampled);
   if (!blocked) failures.push(...checkFillRates(rates, history, thresholds));
-  failures.push(...checkClosedSets(listings, thresholds));
+  for (const n of checkClosedSets(listings, thresholds)) {
+    notices.push(n);
+    log(`  NOTICE [${n.category}] ${n.check}: ${n.message}`);
+    if (n.detail !== undefined) log(`    detail: ${oneLine(n.detail)}`);
+  }
 
   // ---------------------------------------------------------------- report
 
@@ -334,6 +339,7 @@ export async function liveCheck({ lib, small, history, trace, print = console.lo
     requests,
     passed: reported.length === 0,
     failures: reported,
+    notices,
     fillRates: blocked ? null : rates,
   };
 
@@ -343,6 +349,7 @@ export async function liveCheck({ lib, small, history, trace, print = console.lo
     log(`  [${f.category}] ${f.check}: ${f.message}`);
     if (f.detail !== undefined) log(`    detail: ${oneLine(f.detail)}`);
   }
+  if (notices.length > 0) log(`${notices.length} notices for the maintainer, which do not fail the run: ${notices.map((n) => n.check).join(', ')}`);
   const unreported = failures.filter((f) => !reported.includes(f));
   if (unreported.length > 0) {
     log(`  ${unreported.length} more failures are left out of the report, since the block explains them:`);
