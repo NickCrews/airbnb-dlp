@@ -31,14 +31,18 @@ const ADDITIVE_INCREASE = 0.5;
  * The pace works like TCP's congestion control. Each healthy response speeds
  * it up: by 10% until the first rate limit, then by a little. A rate limit
  * halves it, pauses every request for the server's Retry-After, and makes half
- * the old rate the point where fast speedup stops. The pace never goes above
- * the ceiling, which callers can only lower.
+ * the old rate the point where fast speedup stops. Rate limits that arrive
+ * during a pause are the same event, answered by the requests that were
+ * already in flight: they extend the pause but do not halve the pace again.
+ * The pace never goes above the ceiling, which callers can only lower.
  */
 export class Scheduler {
   private rate: number;
   private readonly ceiling: number;
   private slowStartUntil: number;
   private reportedRate: number;
+  /** When the current rate-limit pause ends. */
+  private pausedUntil = -Infinity;
   private readonly onPace: PaceOptions['onPace'];
   private readonly concurrency: number;
   private readonly queues = new Map<number, Waiter[]>();
@@ -76,11 +80,16 @@ export class Scheduler {
 
   /** A rate limit: halve the pace and hold every request back for `pauseMs`. */
   rateLimited(pauseMs: number): void {
-    this.rate = Math.max(MIN_REQUESTS_PER_SECOND, this.rate / 2);
-    this.slowStartUntil = this.rate;
-    this.reportedRate = this.rate;
-    this.nextAt = Math.max(this.nextAt, this.clock.now() + pauseMs);
-    this.onPace?.(this.rate, 'rate-limited', pauseMs);
+    const now = this.clock.now();
+    const sameEvent = now < this.pausedUntil;
+    if (!sameEvent) {
+      this.rate = Math.max(MIN_REQUESTS_PER_SECOND, this.rate / 2);
+      this.slowStartUntil = this.rate;
+      this.reportedRate = this.rate;
+    }
+    this.pausedUntil = Math.max(this.pausedUntil, now + pauseMs);
+    this.nextAt = Math.max(this.nextAt, this.pausedUntil);
+    if (!sameEvent) this.onPace?.(this.rate, 'rate-limited', pauseMs);
   }
 
   /** Resolves with a release function once a request may start. */

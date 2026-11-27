@@ -45,7 +45,7 @@ export interface ArmResult {
   bytes: number;
   /** Responses Airbnb refused outright: 403, 428 or a challenge page. */
   refusals: number;
-  /** Rate limits (HTTP 429), whether the client waited them out or not. */
+  /** Rate limits the client slowed down for (a 429, or the API's 401 throttle): its `rate-limited` pace events. */
   rateLimits: number;
   retries: number;
   latencyMs: { p50: number; p95: number };
@@ -87,9 +87,11 @@ export function stressMetrics(events: TraceEvent[], run: { ms: number; items: nu
   let fastestPace: number | null = null;
   for (const e of events) {
     if (e.type === 'request') requests++;
-    else if (e.type === 'response' && e.status === 429) rateLimits++;
-    else if (e.type === 'response' && e.category === 'Blocked') refusals++;
-    else if (e.type === 'pace') fastestPace = Math.max(fastestPace ?? 0, e.requestsPerSecond);
+    else if (e.type === 'response' && e.category === 'Blocked' && e.status !== 429) refusals++;
+    else if (e.type === 'pace') {
+      fastestPace = Math.max(fastestPace ?? 0, e.requestsPerSecond);
+      if (e.reason === 'rate-limited') rateLimits++;
+    }
   }
   return { ms: run.ms, requests, requestsPerSecond: requests / Math.max(run.ms / 1000, 0.001), rateLimits, refusals, fastestPace, items: run.items, ok: run.ok, error: run.error };
 }
@@ -161,10 +163,11 @@ export function armMetrics(events: TraceEvent[], report: Report, meta: { source:
       latencies.push(e.ms);
       const p = productOfCall.get(e.call);
       if (p) entry(p).bytes += e.bytes;
-      if (e.status === 429) rateLimits++;
-      else if (e.category === 'Blocked') refusals++;
+      if (e.category === 'Blocked' && e.status !== 429) refusals++;
     } else if (e.type === 'retry') {
       retries++;
+    } else if (e.type === 'pace' && e.reason === 'rate-limited') {
+      rateLimits++;
     }
   }
   return {

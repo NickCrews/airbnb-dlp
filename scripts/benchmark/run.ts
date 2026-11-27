@@ -7,7 +7,7 @@
  * each runner of the Benchmark workflow.
  *
  *   pnpm benchmark [--candidate <dir|git ref>] [--base <dir|git ref>] [--label <name>]
- *                  [--order candidate-first|base-first] [--out <dir>] [--no-stress]
+ *                  [--order candidate-first|base-first] [--out <dir>] [--stress candidate|base|none]
  *
  * --candidate  default: this working tree, uncommitted changes included.
  * --base       optional; a git ref is checked out into a temporary worktree.
@@ -17,7 +17,11 @@
  * --out        default .benchmark. Writes benchmark.json, summary.md, and per
  *              side <side>.trace.ndjson, <side>.stress.trace.ndjson,
  *              <side>.log.txt and <side>.report.json.
- * --no-stress  skip the stress stage: about 330 fewer requests a side.
+ * --stress     which side gets the stress stage: candidate (default), base,
+ *              or none. Only one side a machine: Airbnb's API throttle
+ *              outlasts a burst by more than a minute, so a second side's
+ *              stress stage would start inside the first one's. The workflow
+ *              alternates the side across runners.
  *
  * The workload, the checks and the measurement come from this checkout; only
  * the library under test comes from --candidate and --base. Exit code 1 when
@@ -83,7 +87,8 @@ async function load(dir: string): Promise<Library> {
   return { createClient: entry.createClient, bookableStays: entry.bookableStays, impitTransport: transport.impitTransport };
 }
 
-const stressEnabled = !args.includes('--no-stress');
+const stressSide = flag('--stress') ?? 'candidate';
+if (!['candidate', 'base', 'none'].includes(stressSide)) throw new Error('--stress must be candidate, base or none');
 
 /**
  * Searches the stress area for `listings` ids, then fetches all their reviews
@@ -98,13 +103,18 @@ async function stress(lib: Library, side: string): Promise<{ events: TraceEvent[
   const client = lib.createClient({ trace: (e) => events.push(e) });
   const started = Date.now();
   const ids: string[] = [];
-  for await (const hit of client.search([{ area: { bbox: area.bbox }, nightlyPrice }]).items()) {
+  const search = client.search([{ area: { bbox: area.bbox }, nightlyPrice }]);
+  for await (const hit of search.items()) {
     ids.push(hit.listing.id);
     if (ids.length >= listings) break;
   }
+  // Leaving the loop early aborts the search on purpose; anything else that ended it counts.
+  const searchError = (await search.outcome()).error;
   const { items, outcome } = await client.reviews(ids, { limit: reviewsLimit }).all();
   const ms = Date.now() - started;
-  const error: ErrorCategory | null = outcome.error?.category ?? null;
+  const error: ErrorCategory | null =
+    (searchError && searchError.category !== 'Aborted' ? searchError.category : null) ?? outcome.error?.category ?? (ids.length < listings ? 'Unknown' : null);
+  if (ids.length < listings) console.log(`[${side}] stress: the search found ${ids.length} of ${listings} listings`);
   const result = stressMetrics(events, { ms, items: items.length, ok: items.filter((r) => r.ok).length, error });
   console.log(
     `[${side}] stress: ${result.requests} requests in ${(ms / 1000).toFixed(1)} s (${result.requestsPerSecond.toFixed(1)}/s), ` +
@@ -145,13 +155,6 @@ async function live(side: 'candidate' | 'base', source: string): Promise<LiveRun
   return { side, source, commit, lib, events, report, wallMs };
 }
 
-/**
- * Airbnb's API throttle outlasts a burst by tens of seconds, so the stress
- * stages come after both live checks, and the second waits this long after
- * the first: neither the live checks nor the second stress stage start inside
- * the other side's throttle.
- */
-const STRESS_GAP_MS = 60_000;
 
 try {
   mkdirSync(outDir, { recursive: true });
@@ -163,14 +166,13 @@ try {
     if (i > 0) await new Promise((r) => setTimeout(r, PAUSE_MS));
     runs.push(await live(side, side === 'candidate' ? candidateSource : baseSource!));
   }
+  // After both live checks, so neither starts inside the throttle a stress stage provokes.
   const stressBySide = new Map<'candidate' | 'base', StressResult>();
-  if (stressEnabled) {
-    for (const [i, run] of runs.entries()) {
-      if (i > 0) await new Promise((r) => setTimeout(r, STRESS_GAP_MS));
-      const { events, result } = await stress(run.lib, run.side);
-      stressBySide.set(run.side, result);
-      writeFileSync(join(outDir, `${run.side}.stress.trace.ndjson`), events.map((e) => JSON.stringify(e)).join('\n') + '\n');
-    }
+  const stressed = runs.find((r) => r.side === stressSide);
+  if (stressed) {
+    const { events, result } = await stress(stressed.lib, stressed.side);
+    stressBySide.set(stressed.side, result);
+    writeFileSync(join(outDir, `${stressed.side}.stress.trace.ndjson`), events.map((e) => JSON.stringify(e)).join('\n') + '\n');
   }
   const arm = (run: LiveRun | undefined) =>
     run ? armMetrics(run.events, run.report, { source: run.source, commit: run.commit, wallMs: run.wallMs }, stressBySide.get(run.side) ?? null) : null;

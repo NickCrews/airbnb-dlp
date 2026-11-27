@@ -116,8 +116,11 @@ jobs:
         run: |
           # Odd runners measure the candidate first, even ones the base.
           ORDER=$([ $((RUNNER % 2)) -eq 1 ] && echo candidate-first || echo base-first)
+          # One side's stress stage per runner, alternating: odd runners stress
+          # the candidate, even ones the base (or the candidate, without one).
+          STRESS=$([ $((RUNNER % 2)) -eq 1 ] || [ -z "$BASE_SHA" ] && echo candidate || echo base)
           node scripts/benchmark/run.ts --candidate "$CANDIDATE_SHA" ${BASE_SHA:+--base "$BASE_SHA"} \
-            --label "runner-$RUNNER" --order "$ORDER" --out benchmark-out || true
+            --label "runner-$RUNNER" --order "$ORDER" --stress "$STRESS" --out benchmark-out || true
           cat benchmark-out/summary.md >> "$GITHUB_STEP_SUMMARY" || true
       - if: always()
         uses: actions/upload-artifact@v5

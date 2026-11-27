@@ -95,6 +95,7 @@ describe('benchmark metrics', () => {
       { type: 'response', at: 100, call: 1, request: 1, attempt: 0, status: 200, bytes: 1000, ms: 100, category: null },
       { type: 'request', at: 1000, call: 1, request: 2, attempt: 0, method: 'GET', url: 'https://www.airbnb.com/rooms/2', queuedMs: 900 },
       { type: 'response', at: 1100, call: 1, request: 2, attempt: 0, status: 429, bytes: 10, ms: 100, category: 'Blocked' },
+      { type: 'pace', at: 1100, requestsPerSecond: 1, reason: 'rate-limited', pauseMs: 2000 },
       { type: 'call.end', at: 1100, call: 1, product: 'listings', items: 2, requests: 2, incomplete: 1, error: 'Blocked' },
     ];
     const report: Report = { startedAt: '2026-11-27T00:00:00Z', finishedAt: '2026-11-27T00:00:01Z', small: true, requests: 2, passed: false, failures: [{ category: 'Blocked', check: 'listings', message: 'Airbnb blocked the run' }], fillRates: null };

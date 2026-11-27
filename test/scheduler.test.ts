@@ -102,3 +102,15 @@ describe('Scheduler pace', () => {
     expect(reports.map((r) => r[1])).toEqual(['faster', 'rate-limited']);
   });
 });
+
+describe('Scheduler pace under a burst of rate limits', () => {
+  it('halves once for limits that arrive during the same pause', () => {
+    const clock = manualClock(0);
+    const s = new Scheduler(clock, 100, 32, { initial: 64 });
+    for (let i = 0; i < 32; i++) s.rateLimited(10_000);
+    expect(s.requestsPerSecond).toBe(32);
+    clock.advance(10_001);
+    s.rateLimited(10_000);
+    expect(s.requestsPerSecond).toBe(16);
+  });
+});
