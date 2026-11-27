@@ -59,7 +59,10 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: live-check-report-${{ matrix.runtime }}
-          path: .live-check/out/report.json
+          # log.txt goes with the report so the filed issue can quote it.
+          path: |
+            .live-check/out/report.json
+            .live-check/out/log.txt
           retention-days: 15
           if-no-files-found: ignore
       - name: Upload recorded exchanges

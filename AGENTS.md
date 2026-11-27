@@ -29,7 +29,7 @@ node test/run-fixtures.ts       # the fixture suite outside vitest (also: bun, d
 
 ## Repairing a failure
 
-A failing live check opens an issue, and every issue starts a repair session. The issue lists the failed checks, each with a category guessed from status codes and parse results; the guess is not a diagnosis. The recorded exchanges, bodies included, are in the failing run's `live-check-*` artifact (`gh run download <run id>`), and its log shows every request with its status.
+A failing live check opens an issue, and every issue starts a repair session. The issue lists the failed checks, each with a category guessed from status codes and parse results; the guess is not a diagnosis. The issue quotes the live check's log: each stage, each request with its status, and each failure. The recorded exchanges, bodies included, are in the failing run's `live-check-*` artifact (`gh run download <run id>`).
 
 ### 1. Triage
 
