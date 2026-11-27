@@ -4,7 +4,9 @@
 [![Live check against airbnb.com, every 4 hours](https://github.com/NickCrews/airbnb-dlp/actions/workflows/live-check.yml/badge.svg?event=schedule)](https://github.com/NickCrews/airbnb-dlp/actions/workflows/live-check.yml?query=event%3Aschedule)
 [![Repair-loop drill](https://github.com/NickCrews/airbnb-dlp/actions/workflows/drill.yml/badge.svg)](https://github.com/NickCrews/airbnb-dlp/actions/workflows/drill.yml)
 
-Airbnb listing data for any area: search results, listing details, availability calendars, price quotes and reviews. When Airbnb changes its site, a scheduled live check catches it and the library is repaired, so new releases keep working.
+Airbnb client in typescript: search results, listing details, availability calendars, price quotes and reviews.
+
+When Airbnb changes its site, a [scheduled live check](https://github.com/NickCrews/airbnb-dlp/actions/workflows/live-check.yml) catches it and triggers an agent to repair the library. The goal is to publish a new release to npm within a few hours after a breakage. Inspired by [yt-dlp](https://github.com/yt-dlp/yt-dlp), a piece of web infrastructure that somehow just keeps working even when YouTube keeps changing underneath it.
 
 Unofficial; not affiliated with Airbnb, Inc.
 
