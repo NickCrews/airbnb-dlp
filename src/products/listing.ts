@@ -1,16 +1,15 @@
 /**
- * Listing attributes, from the listing page. The page is not a documented API,
- * so each field is read in up to three independent ways, and a change to one
- * leaves the others working:
+ * Listing attributes, from the StaysPdpSections query: the GraphQL data the
+ * listing page itself loads, at a fraction of the page's size. Fields are
+ * found by key name and shape anywhere in the response, not by path, so
+ * renamed wrappers and moved sections do not break them.
  *
- * 1. the embedded GraphQL state, in every JSON script on the page. Fields are
- *    found by key name and shape anywhere in the tree, not by path, so renamed
- *    wrappers and moved sections do not break them;
- * 2. the schema.org JSON-LD block, for the coordinate;
- * 3. patterns over the raw HTML, for when the JSON does not parse. A pattern
- *    yields nothing when it matches more than one distinct value.
+ * parseListingPage reads the same attributes from a listing page's HTML, in
+ * up to three independent ways: the embedded GraphQL state, the schema.org
+ * JSON-LD block for the coordinate, and patterns over the raw HTML. A pattern
+ * yields nothing when it matches more than one distinct value.
  */
-import { ORIGIN, decodeNodeId, htmlRequest } from '../airbnb.ts';
+import { ORIGIN, decodeNodeId, graphql, nodeId } from '../airbnb.ts';
 import type { Call } from '../call.ts';
 import { AirbnbError } from '../errors.ts';
 import { MarkerMissingError, ShapeError } from '../parse-errors.ts';
@@ -265,6 +264,15 @@ function pickLine<T extends { count: number | null }>(lines: string[], match: Re
 
 export function parseListingPage(id: ListingId, html: string): Listing {
   const { json, jsonLd } = pageDocs(html);
+  return parseListingDocs(id, json, jsonLd, html);
+}
+
+/**
+ * A listing from its JSON documents: the listing page's embedded GraphQL
+ * state, or a StaysPdpSections response. `jsonLd` and `html` are the page's
+ * fallbacks, empty for an API response.
+ */
+export function parseListingDocs(id: ListingId, json: unknown[], jsonLd: unknown[], html: string): Listing {
   if (isMissingListing(json)) throw new AirbnbError('NotFound', `listing ${id} is removed or hidden`);
 
   const location = findLocation(json);
@@ -312,14 +320,55 @@ export function parseListingPage(id: ListingId, html: string): Listing {
   };
 }
 
+/** The variables the listing page sends for StaysPdpSections, without dates or guests. */
+export function listingVariables(id: ListingId): Record<string, unknown> {
+  const flags = {
+    includeGpBookItFragment: true,
+    includeGpPropertyAvailableRoomsFragment: false,
+    includePdpLayoutPipelineInputs: false,
+    includePdpMigrationBookItCalendarSheetFragment: true,
+    includePdpMigrationBookItFloatingFooterFragment: true,
+    includePdpMigrationBookItNavFragment: true,
+    includePdpMigrationBookItSidebarFragment: true,
+    includePdpMigrationPropertyAvailableRoomsFragment: true,
+    includePdpOffers: false,
+  };
+  return {
+    id: nodeId('StayListing', id),
+    demandStayListingId: nodeId('DemandStayListing', id),
+    ...flags,
+    amenityIds: null,
+    categoryTag: null,
+    causeId: null,
+    dateRange: null,
+    federatedSearchId: null,
+    federatedSearchSessionId: null,
+    guestCounts: null,
+    numberOfChildren: null,
+    numberOfInfants: null,
+    numberOfPets: null,
+    photoId: null,
+    targetPromotion: null,
+    pdpSectionsRequest: {
+      adults: '1',
+      bypassTargetings: false,
+      layouts: ['SIDEBAR', 'SINGLE_COLUMN'],
+      pets: 0,
+      preview: false,
+      privateBooking: false,
+      staysBookingMigrationEnabled: false,
+      useNewSectionWrapperApi: false,
+      hostPreview: false,
+      logPricingViewEvent: false,
+    },
+  };
+}
+
 export async function fetchListing(call: Call, id: ListingId): Promise<Listing> {
-  const result = await call.fetch(htmlRequest(listingPageUrl(id)), [404, 410]);
-  if (result.response.status === 404 || result.response.status === 410) {
-    throw new AirbnbError('NotFound', `listing ${id} is removed or hidden`, { exchange: result.exchange });
-  }
-  return call.parse(result, (body) => {
+  const { json, result } = await graphql(call, 'StaysPdpSections', listingVariables(id));
+  return call.parse(result, () => {
     try {
-      return parseListingPage(id, body);
+      return parseListingDocs(id, [json], [], '');
     } catch (cause) {
       if (cause instanceof AirbnbError) {
         throw new AirbnbError(cause.category, cause.message, { exchange: result.exchange, cause });

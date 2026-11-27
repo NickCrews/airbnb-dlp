@@ -1,6 +1,8 @@
 /**
- * The listing parser against real recorded pages, altered the ways Airbnb's
- * pages could change: each layer must keep working when another breaks.
+ * The listing page parser against a real recorded page, altered the ways
+ * Airbnb's pages could change: each layer must keep working when another
+ * breaks. The client fetches StaysPdpSections instead of the page, so the
+ * page lives in test/data rather than fixtures/.
  */
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -8,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { parseListingPage } from '../src/products/listing.ts';
 import { MarkerMissingError } from '../src/parse-errors.ts';
 
-const fixture = JSON.parse(gunzipSync(readFileSync(new URL('../fixtures/listings/anchorage-ak.json.gz', import.meta.url))).toString());
+const fixture = JSON.parse(gunzipSync(readFileSync(new URL('./data/listing-page-anchorage-ak.json.gz', import.meta.url))).toString());
 const page = fixture.recordings[0].response.body as string;
 const id = fixture.inputs[0] as string;
 const baseline = parseListingPage(id, page);
