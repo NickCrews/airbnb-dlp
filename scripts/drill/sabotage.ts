@@ -17,4 +17,8 @@ for (const { file, from, to } of scenario.edits) {
   if (count !== 1) throw new Error(`scenario ${name}: expected the text once in ${file}, found it ${count} times; update scripts/drill/scenarios.ts`);
   writeFileSync(path, text.replace(from, to));
   console.log(`edited ${file}`);
+  console.log(`  - ${from}`);
+  console.log(`  + ${to}`);
 }
+if (scenario.edits.length === 0) console.log(`scenario ${name} edits no code`);
+for (const [k, v] of Object.entries(scenario.env ?? {})) console.log(`the live check runs with ${k}=${v}`);
