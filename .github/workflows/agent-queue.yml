@@ -17,6 +17,9 @@ permissions:
 concurrency:
   group: agent-queue
   cancel-in-progress: false
+# The job has no checkout, so gh reads the repository from here.
+env:
+  GH_REPO: ${{ github.repository }}
 
 jobs:
   dispatch:
@@ -30,6 +33,7 @@ jobs:
           BOT: ${{ vars.LIVE_CHECK_BOT_LOGIN }}
           AGENT: ${{ vars.AGENT_BOT_LOGIN }}
         run: |
+          set -o pipefail
           gh api "repos/$REPO/issues?state=open&labels=agent-repair&per_page=100" \
             --jq ".[] | select(.pull_request == null and .user.login == env.BOT and ([.labels[].name] | index(\"needs-maintainer\") | not)) | .number" > waiting.txt
           # Sessions already queued or running, by the issue their run is named for.

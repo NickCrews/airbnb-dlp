@@ -22,6 +22,9 @@ permissions:
   issues: write
   actions: read
   id-token: write
+# Steps before the checkout have no git remote, so gh reads the repository from here.
+env:
+  GH_REPO: ${{ github.repository }}
 
 jobs:
   repair:
